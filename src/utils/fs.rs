@@ -22,11 +22,11 @@ pub fn format_host(path: &Path, home: Option<&str>) -> String {
         let first = parts[0];
         let second = parts[1];
         let last = parts.last().unwrap_or(&"");
-        
+
         if first == "~" {
-             format!("~/{}/../{}", second, last)
+            format!("~/{}/../{}", second, last)
         } else {
-             format!("/{}/{}/../{}", first, second, last)
+            format!("/{}/{}/../{}", first, second, last)
         }
     } else {
         display_path

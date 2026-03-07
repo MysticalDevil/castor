@@ -54,10 +54,8 @@ impl AuditLogger {
         }
 
         let content = std::fs::read_to_string(&self.log_path)?;
-        let entries: std::result::Result<Vec<AuditEntry>, serde_json::Error> = content
-            .lines()
-            .map(|line| serde_json::from_str(line))
-            .collect();
+        let entries: std::result::Result<Vec<AuditEntry>, serde_json::Error> =
+            content.lines().map(serde_json::from_str).collect();
 
         Ok(entries?)
     }

@@ -1,7 +1,7 @@
+use crate::error::{CastorError, Result};
+use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use directories::ProjectDirs;
-use crate::error::{Result, CastorError};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -19,7 +19,9 @@ impl Default for Config {
         let data_dir = proj_dirs.data_dir();
         let _config_dir = proj_dirs.config_dir();
 
-        let home = std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("/tmp"));
+        let home = std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("/tmp"));
         let default_gemini = home.join(".gemini").join("tmp");
 
         Self {
@@ -38,7 +40,10 @@ impl Config {
                 let content = std::fs::read_to_string(p)?;
                 return serde_json::from_str(&content).map_err(CastorError::Serialization);
             } else {
-                return Err(CastorError::Config(format!("Config file not found: {:?}", p)));
+                return Err(CastorError::Config(format!(
+                    "Config file not found: {:?}",
+                    p
+                )));
             }
         }
 
@@ -65,8 +70,8 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
     use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn test_config_default() {

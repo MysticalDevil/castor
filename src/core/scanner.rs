@@ -1,6 +1,6 @@
-use std::path::{Path, PathBuf};
 use crate::core::session::Session;
 use crate::error::Result;
+use std::path::{Path, PathBuf};
 
 pub struct Scanner {
     base_path: PathBuf,
@@ -24,7 +24,8 @@ impl Scanner {
             let entry = entry?;
             let project_path = entry.path();
             if project_path.is_dir() {
-                let project_id = project_path.file_name()
+                let project_id = project_path
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown")
                     .to_string();
@@ -50,12 +51,22 @@ impl Scanner {
         Ok(sessions)
     }
 
-    fn scan_chats_dir(&self, chats_path: &Path, project_id: String, host_path: Option<PathBuf>, sessions: &mut Vec<Session>) -> Result<()> {
+    fn scan_chats_dir(
+        &self,
+        chats_path: &Path,
+        project_id: String,
+        host_path: Option<PathBuf>,
+        sessions: &mut Vec<Session>,
+    ) -> Result<()> {
         for entry in std::fs::read_dir(chats_path)? {
             let entry = entry?;
             let path = entry.path();
-            
-            if path.file_name().and_then(|n| n.to_str()).map_or(true, |n| n.starts_with('.')) {
+
+            if path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_none_or(|n| n.starts_with('.'))
+            {
                 continue;
             }
 
@@ -95,9 +106,12 @@ mod tests {
 
         let scanner = Scanner::new(tmp.path());
         let results = scanner.scan().unwrap();
-        
+
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].project_id, project_id);
-        assert_eq!(results[0].host_path.as_ref().unwrap().to_str().unwrap(), "/home/user/code");
+        assert_eq!(
+            results[0].host_path.as_ref().unwrap().to_str().unwrap(),
+            "/home/user/code"
+        );
     }
 }

@@ -1,5 +1,5 @@
-use crate::core::session::Session;
 use crate::core::scanner::Scanner;
+use crate::core::session::Session;
 use crate::error::Result;
 use std::path::Path;
 
@@ -26,9 +26,9 @@ impl Registry {
     }
 
     pub fn find(&self, query: &str) -> Option<&Session> {
-        self.sessions.iter().find(|s| {
-            s.id == query || s.name.as_ref().map_or(false, |n| n == query)
-        })
+        self.sessions
+            .iter()
+            .find(|s| s.id == query || s.name.as_ref().is_some_and(|n| n == query))
     }
 
     pub fn list(&self) -> &[Session] {
@@ -39,8 +39,8 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
     use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn test_registry_find() {
@@ -50,7 +50,11 @@ mod tests {
         let chats_path = project_path.join("chats");
         fs::create_dir_all(&chats_path).unwrap();
 
-        fs::write(chats_path.join("s1.json"), r#"{"messages": [{"type": "user", "content": "Query1"}]}"#).unwrap();
+        fs::write(
+            chats_path.join("s1.json"),
+            r#"{"messages": [{"type": "user", "content": "Query1"}]}"#,
+        )
+        .unwrap();
 
         let mut registry = Registry::new(tmp.path());
         registry.reload().unwrap();
