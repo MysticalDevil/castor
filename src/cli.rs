@@ -1,8 +1,16 @@
+use clap::builder::styling::{AnsiColor, Effects, Styles};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+// Define a professional Rust CLI style palette
+const STYLES: Styles = Styles::styled()
+    .header(AnsiColor::Yellow.on_default().bold())
+    .usage(AnsiColor::Yellow.on_default().bold())
+    .literal(AnsiColor::Green.on_default().bold())
+    .placeholder(AnsiColor::Cyan.on_default());
+
 #[derive(Parser)]
-#[command(name = "castor")]
+#[command(name = "castor", version, author, styles = STYLES)]
 #[command(about = "Gemini Session Manager - Local session management for Gemini CLI", long_about = None)]
 pub struct Cli {
     /// Enable verbose logging
