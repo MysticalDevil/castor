@@ -2,80 +2,60 @@ import os
 import json
 import time
 import uuid
+import random
+import shutil
 from datetime import datetime, timedelta
 
+# Paths
 base_dir = "test_data"
 gemini_tmp = os.path.join(base_dir, "gemini_tmp")
 trash_dir = os.path.join(base_dir, "trash")
 audit_dir = os.path.join(base_dir, "audit")
+fixtures_src = "tests/common/fixtures"
 
-# Ensure directories exist
+# 1. Clean and Setup
+if os.path.exists(base_dir):
+    shutil.rmtree(base_dir)
+
 os.makedirs(gemini_tmp, exist_ok=True)
 os.makedirs(trash_dir, exist_ok=True)
 os.makedirs(audit_dir, exist_ok=True)
 
-projects = [
-    {"id": "castor_dev_hash", "root": "/home/omega/Projects/castor", "name": "Castor Development"},
-    {"id": "rust_learning_hash", "root": "/home/omega/Learning/rust-basics", "name": "Rust Learning"},
-    {"id": "web_project_hash", "root": "/var/www/my-app", "name": "Web Project"},
-    {"id": "broken_project_hash", "root": "/non/existent/path/for/warning", "name": "Missing Host Project"},
-    {"id": "no_root_project_hash", "root": None, "name": "Orphaned Project"}
-]
+# 2. Sync Static Fixtures (The "Fixed" part)
+if os.path.exists(fixtures_src):
+    print(f"Loading static fixtures from {fixtures_src}...")
+    for root, dirs, files in os.walk(fixtures_src):
+        for file in files:
+            src_path = os.path.join(root, file)
+            # Maintain the same structure under gemini_tmp
+            rel_path = os.path.relpath(src_path, fixtures_src)
+            dest_path = os.path.join(gemini_tmp, rel_path)
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+            shutil.copy2(src_path, dest_path)
 
-def gen_realistic_filename(days_ago=0):
-    dt = datetime.now() - timedelta(days=days_ago)
+# 3. Generate Random Data (The "Massive" part)
+def gen_realistic_filename(days_ago=0, seconds_offset=0):
+    dt = datetime.now() - timedelta(days=days_ago, seconds=seconds_offset)
     short_uuid = str(uuid.uuid4())[:8]
     return f"session-{dt.strftime('%Y-%m-%dT%H-%M')}-{short_uuid}.json"
 
-def create_session(project_id, head_text, days_ago=0, content_lines=None, is_corrupted=False):
+def create_random_session(project_id, head_text, days_ago=0):
     path = os.path.join(gemini_tmp, project_id, "chats")
     os.makedirs(path, exist_ok=True)
-    
     file_name = gen_realistic_filename(days_ago)
     file_path = os.path.join(path, file_name)
-    
-    if is_corrupted:
-        # Create an empty file to trigger ERROR state
-        with open(file_path, "w") as f:
-            pass
-    else:
-        messages = [{"type": "user", "content": [{"text": head_text}]}]
-        if content_lines:
-            for role, text in content_lines:
-                messages.append({"type": role, "content": [{"text": text}]})
-                
-        data = {"messages": messages}
-        with open(file_path, "w") as f:
-            json.dump(data, f)
-        
-    # Adjust timestamps
+    data = {"messages": [{"type": "user", "content": head_text}]}
+    with open(file_path, "w") as f:
+        json.dump(data, f)
     mtime = time.time() - (days_ago * 86400)
     os.utime(file_path, (mtime, mtime))
 
-# Generate Project Roots
-for p in projects:
-    p_path = os.path.join(gemini_tmp, p["id"])
-    os.makedirs(p_path, exist_ok=True)
-    if p["root"]:
-        with open(os.path.join(p_path, ".project_root"), "w") as f:
-            f.write(p["root"])
+print("Generating 100+ random sessions for stress testing...")
+for i in range(100):
+    create_random_session("generated_bulk_study", f"Randomly generated study session #{i}", random.randint(0, 30))
 
-# Project: Castor Development (Healthy)
-create_session("castor_dev_hash", "Implement doctor command", 0)
-create_session("castor_dev_hash", "Fix alignment issues", 1)
+# Create .project_root for the fixed static project
+with open(os.path.join(gemini_tmp, "static_proj", ".project_root"), "w") as f:
+    f.write(os.path.abspath("."))
 
-# Project: Rust Learning (Lots of healthy sessions)
-for i in range(1, 10):
-    create_session("rust_learning_hash", f"Learning Rust Lesson {i}", i)
-
-# Project: Broken Project (WARN state - host path doesn't exist)
-create_session("broken_project_hash", "This session's host is missing", 2)
-
-# Project: Web Project (Includes an ERROR session)
-create_session("web_project_hash", "Design a REST API", 3)
-create_session("web_project_hash", "CORRUPTED SESSION", 4, is_corrupted=True)
-
-# Project: Orphaned (Untracked)
-create_session("no_root_project_hash", "A session without a known host", 40)
-
-print("More realistic and diverse test data generated successfully in 'test_data/'.")
+print(f"Mixed dataset ready in '{base_dir}/'. (Static + Generated)")
