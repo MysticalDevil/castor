@@ -30,7 +30,7 @@ coverage:
 
 # Run the rich data generator script (requires python3)
 gen-test-data:
-    python3 generate_test_data.py
+    python3 scripts/generate_test_data.py
 
 # List sessions using the generated test data
 test-list: gen-test-data

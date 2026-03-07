@@ -54,4 +54,4 @@ Castor is a local session manager for the Gemini CLI, written in Rust. It provid
 ### Testing Practices
 - **Isolation**: Always use `tempfile` for file system tests to avoid touching real Gemini data.
 - **Coverage**: Aim for high coverage in `core` and `utils` modules.
-- **Simulated Data**: Use `generate_test_data.py` to recreate complex scenarios for manual TUI/CLI verification.
+- **Simulated Data**: Use `scripts/generate_test_data.py` to recreate complex scenarios for manual TUI/CLI verification.

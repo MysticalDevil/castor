@@ -1,6 +1,6 @@
 /target
 /test_data
 /lcov.info
-generate_test_data.py
+scripts/*.bk
 **/*.rs.bk
 Cargo.lock
