@@ -37,6 +37,35 @@ pub enum Commands {
         page_size: usize,
     },
 
+    /// Show the content of a specific session
+    Cat {
+        /// The ID or path of the session to display
+        id: String,
+
+        /// Display raw JSON instead of pretty-printed content
+        #[arg(long)]
+        raw: bool,
+    },
+
+    /// Remove old sessions based on a strategy
+    Prune {
+        /// Remove sessions older than N days
+        #[arg(short, long, default_value_t = 30)]
+        days: u64,
+
+        /// Perform a hard delete (bypass trash)
+        #[arg(long)]
+        hard: bool,
+
+        /// Dry-run mode: show what would be pruned
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        dry_run: bool,
+
+        /// Confirm the operation
+        #[arg(long)]
+        confirm: bool,
+    },
+
     /// Delete a specific session
     Delete {
         /// The ID or path of the session to delete

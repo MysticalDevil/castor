@@ -7,6 +7,7 @@ use clap::Parser;
 use colored::Colorize;
 use unicode_width::UnicodeWidthStr;
 use std::collections::HashMap;
+use chrono::{Utc, Duration};
 
 /// Truncates a string to a maximum visual width, adding ".." if truncated.
 fn truncate_visual(s: &str, max_width: usize) -> String {
@@ -74,15 +75,11 @@ fn print_session(s: &castor::core::Session) {
     let head_raw = s.name.as_deref().unwrap_or("---");
     let updated = s.updated_at.format("%Y-%m-%d %H:%M").to_string();
 
-    let truncate = |text: &str, max_len: usize| -> String {
-        truncate_visual(text, max_len)
-    };
-
     println!("{} {} {} {}", 
-        format_cell(&truncate(display_id, 10), id_w, false),
+        format_cell(display_id, id_w, false),
         format_cell(&updated, update_w, false),
-        format_cell(&truncate(&host_raw, 30), host_w, false),
-        format_cell(&truncate(head_raw, 25), head_w, false));
+        format_cell(&host_raw, host_w, false),
+        format_cell(head_raw, head_w, false));
 }
 
 fn main() -> Result<()> {
@@ -139,6 +136,79 @@ fn main() -> Result<()> {
                 for s in sessions {
                     print_session(s);
                 }
+            }
+        }
+        Some(Commands::Cat { id, raw }) => {
+            registry.reload()?;
+            let session = registry.find(&id).ok_or_else(|| {
+                castor::error::CastorError::PathNotFound(std::path::PathBuf::from(id.clone()))
+            })?;
+
+            let content = std::fs::read_to_string(&session.path)?;
+            if raw {
+                println!("{}", content);
+            } else {
+                // Simplified Markdown-like rendering
+                let json: serde_json::Value = serde_json::from_str(&content)?;
+                if let Some(messages) = json.get("messages").and_then(|m| m.as_array()) {
+                    for msg in messages {
+                        let role = msg.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
+                        let color_role = if role == "user" {
+                            role.blue().bold()
+                        } else {
+                            role.green().bold()
+                        };
+                        
+                        println!("\n--- {} ---", color_role);
+                        
+                        let content_val = msg.get("content").unwrap_or(&serde_json::Value::Null);
+                        if let Some(text) = content_val.as_str() {
+                            println!("{}", text);
+                        } else if let Some(arr) = content_val.as_array() {
+                            for item in arr {
+                                if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
+                                    println!("{}", text);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    println!("{}", "Could not parse session messages.".red());
+                }
+            }
+        }
+        Some(Commands::Prune { days, hard, dry_run, confirm }) => {
+            registry.reload()?;
+            let sessions = registry.list();
+            let threshold = Utc::now() - Duration::days(days as i64);
+            let to_prune: Vec<_> = sessions.iter()
+                .filter(|s| s.updated_at < threshold)
+                .collect();
+
+            if to_prune.is_empty() {
+                println!("No sessions older than {} days found.", days);
+                return Ok(());
+            }
+
+            println!("Found {} sessions to prune:", to_prune.len());
+            for s in &to_prune {
+                print_session(s);
+            }
+
+            let is_actually_dry = dry_run && !confirm;
+
+            if is_actually_dry {
+                println!("\n{}", "[DRY-RUN] Pruning would occur if confirmed.".cyan());
+            } else {
+                println!("\nPruning {} sessions...", to_prune.len());
+                for s in to_prune {
+                    if hard {
+                        executor.delete_hard(s, false)?;
+                    } else {
+                        executor.delete_soft(s, false)?;
+                    }
+                }
+                println!("{}", "Pruning complete.".green());
             }
         }
         Some(Commands::Delete { id, hard, dry_run, confirm }) => {
