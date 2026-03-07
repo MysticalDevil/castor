@@ -1,4 +1,4 @@
-use clap::builder::styling::{AnsiColor, Effects, Styles};
+use clap::builder::styling::{AnsiColor, Styles};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
