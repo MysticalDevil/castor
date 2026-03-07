@@ -1,23 +1,53 @@
+use crate::core::cache::{CacheEntry, MetadataCache};
 use crate::core::scanner::Scanner;
 use crate::core::session::Session;
 use crate::error::Result;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub struct Registry {
-    sessions: Vec<Session>,
-    scanner: Scanner,
+    pub sessions: Vec<Session>,
+    pub scanner: Scanner,
+    pub cache: MetadataCache,
+    pub cache_path: PathBuf,
 }
 
 impl Registry {
-    pub fn new(base_path: &Path) -> Self {
+    pub fn new(base_path: &Path, cache_path: &Path) -> Self {
         Self {
             sessions: Vec::new(),
             scanner: Scanner::new(base_path),
+            cache: MetadataCache::load(cache_path),
+            cache_path: cache_path.to_path_buf(),
         }
     }
 
     pub fn reload(&mut self) -> Result<()> {
-        self.sessions = self.scanner.scan()?;
+        let mut new_sessions = self.scanner.scan()?;
+
+        // Apply cache and perform lazy validation
+        for s in &mut new_sessions {
+            if let Some(entry) = self.cache.get(&s.path, s.updated_at) {
+                s.health = entry.health;
+                s.name = entry.name;
+                s.validation_notes = entry.notes;
+            } else {
+                // Not in cache, validate now (for CLI list mode)
+                // In TUI mode, we might want to keep it Unknown until selected
+                s.deep_validate();
+                self.cache.update(
+                    s.path.clone(),
+                    CacheEntry {
+                        mtime: s.updated_at,
+                        health: s.health.clone(),
+                        name: s.name.clone(),
+                        notes: s.validation_notes.clone(),
+                    },
+                );
+            }
+        }
+
+        self.sessions = new_sessions;
+        self.cache.save(&self.cache_path)?;
         Ok(())
     }
 
@@ -34,6 +64,10 @@ impl Registry {
     pub fn list(&self) -> &[Session] {
         &self.sessions
     }
+
+    pub fn list_mut(&mut self) -> &mut [Session] {
+        &mut self.sessions
+    }
 }
 
 #[cfg(test)]
@@ -43,24 +77,29 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn test_registry_find() {
+    fn test_registry_with_cache() {
         let tmp = tempdir().unwrap();
-        let project_id = "test-proj";
-        let project_path = tmp.path().join(project_id);
-        let chats_path = project_path.join("chats");
-        fs::create_dir_all(&chats_path).unwrap();
+        let base = tmp.path().join("gemini");
+        let cache_file = tmp.path().join("cache.json");
+        let chat_dir = base.join("p1/chats");
+        fs::create_dir_all(&chat_dir).unwrap();
 
-        fs::write(
-            chats_path.join("s1.json"),
-            r#"{"messages": [{"type": "user", "content": "Query1"}]}"#,
-        )
-        .unwrap();
+        let s_path = chat_dir.join("session-2026-03-08T12-00-aaaa1111.json");
+        fs::write(&s_path, r#"{"messages": [{"type":"user","content":"hi"}]}"#).unwrap();
 
-        let mut registry = Registry::new(tmp.path());
+        let mut registry = Registry::new(&base, &cache_file);
         registry.reload().unwrap();
+        assert_eq!(registry.list()[0].name, Some("hi".into()));
 
-        assert!(registry.find("s1.json").is_some());
-        assert!(registry.find("Query1").is_some());
-        assert!(registry.find("NonExistent").is_none());
+        // Modify cache file manually to test reuse
+        let mut cache = MetadataCache::load(&cache_file);
+        if let Some(entry) = cache.entries.get_mut(&s_path) {
+            entry.name = Some("cached_name".into());
+        }
+        cache.save(&cache_file).unwrap();
+
+        let mut registry2 = Registry::new(&base, &cache_file);
+        registry2.reload().unwrap();
+        assert_eq!(registry2.list()[0].name, Some("cached_name".into()));
     }
 }

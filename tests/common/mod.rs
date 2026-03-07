@@ -27,6 +27,7 @@ impl TestContext {
             gemini_sessions_path: sessions_path,
             trash_path,
             audit_path,
+            cache_path: base.join("cache"),
             dry_run_by_default: false,
         };
 
@@ -63,6 +64,9 @@ impl TestContext {
     }
 
     pub fn get_registry(&self) -> Registry {
-        Registry::new(&self.config.gemini_sessions_path)
+        Registry::new(
+            &self.config.gemini_sessions_path,
+            &self.config.cache_path.join("metadata.json"),
+        )
     }
 }

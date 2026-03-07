@@ -47,6 +47,7 @@ Castor is a local session manager for the Gemini CLI, written in Rust. It provid
 
 ### Coding Style
 - **100% Safe Rust**: The use of `unsafe` blocks is strictly prohibited. All logic must be implemented using Safe Rust to leverage the compiler's full safety guarantees.
+- **No Clippy Allows**: The use of `#[allow(clippy::...)]` attributes is strictly prohibited. All code must be refactored to satisfy Clippy lints or remain idiomatic.
 - **English Comments**: All code documentation and inline comments must be in English.
 - **Dependency Injection**: Use dependency injection for system-level mocks (like HOME path) in tests instead of modifying global state via `unsafe` functions.
 - **Visual Integrity**: Use `unicode-width` for all table cell calculations to ensure alignment with CJK characters.

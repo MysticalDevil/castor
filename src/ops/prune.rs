@@ -27,6 +27,7 @@ mod tests {
             created_at: now,
             updated_at: now,
             size: 0,
+            health: crate::core::session::SessionHealth::Unknown,
             validation_notes: Vec::new(),
         };
         let s2 = Session {
@@ -38,6 +39,7 @@ mod tests {
             created_at: now - Duration::days(40),
             updated_at: now - Duration::days(40),
             size: 0,
+            health: crate::core::session::SessionHealth::Unknown,
             validation_notes: Vec::new(),
         };
 

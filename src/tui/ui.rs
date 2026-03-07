@@ -52,11 +52,12 @@ fn render_tree(app: &App, frame: &mut Frame, area: Rect) {
                 }
                 Selection::Session(id) => {
                     let session = app.registry.find_by_id(id).unwrap();
-                    let health_symbol = match session.check_health() {
-                        SessionHealth::Ok => "●".green(),
-                        SessionHealth::Warn => "▲".yellow(),
-                        SessionHealth::Error => "✖".red(),
-                        SessionHealth::Risk => "⚠".magenta(),
+                    let health_symbol = match session.health {
+                        SessionHealth::Unknown => Span::raw("○").fg(Color::DarkGray),
+                        SessionHealth::Ok => Span::raw("●").green(),
+                        SessionHealth::Warn => Span::raw("▲").yellow(),
+                        SessionHealth::Error => Span::raw("✖").red(),
+                        SessionHealth::Risk => Span::raw("⚠").magenta(),
                     };
                     let display_id = id
                         .strip_suffix(".json")
@@ -103,27 +104,74 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
             .map(|p| crate::utils::fs::format_host(p, home.as_deref()))
             .unwrap_or_else(|| "Unknown".to_string());
 
+        let health = &session.health;
+        let health_color = match health {
+            SessionHealth::Unknown => Color::DarkGray,
+            SessionHealth::Ok => Color::Green,
+            SessionHealth::Warn => Color::Yellow,
+            SessionHealth::Error => Color::Red,
+            SessionHealth::Risk => Color::Magenta,
+        };
+
         let status_text = vec![
-            Line::from(vec![Span::raw("ID:       ").bold(), Span::raw(&session.id)]),
             Line::from(vec![
-                Span::raw("Project:  ").bold(),
+                Span::styled(
+                    "ID:       ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(&session.id),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    "Project:  ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(&session.project_id),
             ]),
             Line::from(vec![
-                Span::raw("Host:     ").bold(),
+                Span::styled(
+                    "Host:     ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(host_display),
             ]),
             Line::from(vec![
-                Span::raw("Updated:  ").bold(),
+                Span::styled(
+                    "Updated:  ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(session.updated_at.format("%Y-%m-%d %H:%M:%S").to_string()),
             ]),
             Line::from(vec![
-                Span::raw("Size:     ").bold(),
+                Span::styled(
+                    "Size:     ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::raw(format!("{:.2} KB", session.size as f64 / 1024.0)),
             ]),
             Line::from(vec![
-                Span::raw("Health:   ").bold(),
-                Span::raw(format!("{}", session.check_health())),
+                Span::styled(
+                    "Health:   ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{}", health),
+                    Style::default()
+                        .fg(health_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ]),
         ];
 
@@ -134,22 +182,45 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
         );
         frame.render_widget(status_block, details_layout[0]);
 
-        // 2. Conversation Preview Panel
-        let preview_content = match export::session_to_markdown(session) {
+        // 2. Conversation Preview Panel (Using tui-markdown)
+        let markdown_content = match export::session_to_markdown(session) {
             Ok(md) => md,
             Err(_) => "Error reading session content.".to_string(),
         };
 
-        let preview_block = Paragraph::new(preview_content)
+        // Use tui-markdown for rich rendering
+        let mut text = tui_markdown::from_str(&markdown_content);
+
+        // Post-process to colorize USER and GEMINI headers specifically
+        for line in &mut text.lines {
+            let is_user = line.spans.iter().any(|s| s.content.contains("USER"));
+            let is_gemini = line.spans.iter().any(|s| s.content.contains("GEMINI"));
+
+            if is_user {
+                for span in &mut line.spans {
+                    span.style = span.style.fg(Color::Blue).add_modifier(Modifier::BOLD);
+                }
+            } else if is_gemini {
+                for span in &mut line.spans {
+                    span.style = span.style.fg(Color::Green).add_modifier(Modifier::BOLD);
+                }
+            }
+        }
+
+        let preview_block = Paragraph::new(text)
             .block(
                 Block::default()
                     .title(" Conversation Preview ")
                     .borders(Borders::ALL),
             )
-            .wrap(Wrap { trim: true });
+            .wrap(Wrap { trim: false }); // keep markdown spacing
         frame.render_widget(preview_block, details_layout[1]);
     } else {
-        let placeholder = Paragraph::new("Select a session to view details")
+        let msg = app
+            .message
+            .as_deref()
+            .unwrap_or("Select a session to view details");
+        let placeholder = Paragraph::new(msg)
             .block(Block::default().borders(Borders::ALL))
             .alignment(ratatui::layout::Alignment::Center);
         frame.render_widget(placeholder, area);
@@ -158,13 +229,27 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
 
 fn render_keys_bar(app: &App, frame: &mut Frame, area: Rect) {
     let keys = match app.input_mode {
-        InputMode::Normal => {
-            " [q] Quit | [j/k] Navigate | [d] Delete | [r] Reload | [Enter] Select "
-        }
-        InputMode::ConfirmDelete => " Confirm Delete? [y] Yes | [n] No ",
+        InputMode::Normal => vec![
+            " Q ".black().on_cyan(),
+            " Quit ".white().on_dark_gray(),
+            " J/K ".black().on_cyan(),
+            " Navigate ".white().on_dark_gray(),
+            " D ".black().on_cyan(),
+            " Delete ".white().on_dark_gray(),
+            " R ".black().on_cyan(),
+            " Reload ".white().on_dark_gray(),
+            " Enter ".black().on_cyan(),
+            " Select ".white().on_dark_gray(),
+        ],
+        InputMode::ConfirmDelete => vec![
+            " CONFIRM DELETE? ".black().on_red().bold(),
+            " Y ".black().on_green(),
+            " Yes ".white().on_dark_gray(),
+            " N ".black().on_yellow(),
+            " No ".white().on_dark_gray(),
+        ],
     };
 
-    let style = Style::default().bg(Color::Cyan).fg(Color::Black);
-    let bar = Paragraph::new(keys).style(style);
+    let bar = Paragraph::new(Line::from(keys));
     frame.render_widget(bar, area);
 }

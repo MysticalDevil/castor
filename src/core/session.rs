@@ -7,7 +7,6 @@ use std::sync::LazyLock;
 
 static SESSION_ID_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     // Standard Gemini pattern: session-YYYY-MM-DDTHH-MM-hash.json
-    // We allow alphanumeric for the hash part to support descriptive test IDs
     Regex::new(r"^session-(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-([a-zA-Z0-9]{8})\.json$").unwrap()
 });
 
@@ -15,6 +14,7 @@ const MAX_SESSION_SIZE_BYTES: u64 = 50 * 1024 * 1024; // 50MB anomaly threshold
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum SessionHealth {
+    Unknown, // Not yet validated
     Ok,
     Warn,  // Orphaned (Host missing)
     Error, // Corrupted (Structural/IO)
@@ -24,6 +24,7 @@ pub enum SessionHealth {
 impl std::fmt::Display for SessionHealth {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            SessionHealth::Unknown => write!(f, "UNKNOWN"),
             SessionHealth::Ok => write!(f, "OK"),
             SessionHealth::Warn => write!(f, "WARN"),
             SessionHealth::Error => write!(f, "ERROR"),
@@ -42,7 +43,7 @@ pub struct Session {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub size: u64,
-    /// Result of deep validation
+    pub health: SessionHealth,
     pub validation_notes: Vec<String>,
 }
 
@@ -59,6 +60,7 @@ struct GeminiMessage {
 }
 
 impl Session {
+    /// Shallow load of a session (metadata only)
     pub fn from_path(path: &Path, project_id: String, host_path: Option<PathBuf>) -> Result<Self> {
         let id = path
             .file_name()
@@ -78,25 +80,37 @@ impl Session {
             metadata.len()
         };
 
-        let mut validation_notes = Vec::new();
-        let name = Self::extract_and_validate(path, &mut validation_notes);
-
-        Ok(Self {
+        let mut s = Self {
             id,
             project_id,
             host_path,
-            name,
+            name: None,
             path: path.to_path_buf(),
             created_at,
             updated_at,
             size,
-            validation_notes,
-        })
+            health: SessionHealth::Unknown,
+            validation_notes: Vec::new(),
+        };
+        s.health = s.calculate_health();
+        Ok(s)
     }
 
-    /// Performs deep health check combining structural, temporal and statistical analysis.
-    pub fn check_health(&self) -> SessionHealth {
-        // 1. Critical Errors (Structural/IO)
+    /// Performs deep validation if not already done.
+    pub fn deep_validate(&mut self) {
+        if self.health == SessionHealth::Error || self.health == SessionHealth::Risk {
+            // Already failed
+            return;
+        }
+
+        let mut notes = Vec::new();
+        self.name = Self::extract_and_validate(&self.path, &mut notes);
+        self.validation_notes = notes;
+        self.health = self.calculate_health();
+    }
+
+    pub fn calculate_health(&self) -> SessionHealth {
+        // 1. Critical Errors
         if !self.path.exists() || self.size == 0 {
             return SessionHealth::Error;
         }
@@ -108,34 +122,44 @@ impl Session {
             return SessionHealth::Error;
         }
 
-        // 2. Risks (Security/Temporal/Anomaly)
-        // a) Pattern Mismatch
+        // 2. Risks
         if !SESSION_ID_REGEX.is_match(&self.id) {
             return SessionHealth::Risk;
         }
 
-        // b) Temporal Anomaly: Check if ID date is significantly in the future
         if let Some(caps) = SESSION_ID_REGEX.captures(&self.id) {
             let date_str = format!("{} {}:{}", &caps[1], &caps[2], &caps[3]);
-            if let Ok(id_date) = NaiveDateTime::parse_from_str(&date_str, "%Y-%m-%d %H:%M") {
-                // Tolerance: 25 hours to handle all possible TZ shifts + 1h buffer
-                if id_date.and_utc() > self.updated_at + chrono::Duration::hours(25) {
-                    return SessionHealth::Risk;
-                }
+            if let Ok(id_date) = NaiveDateTime::parse_from_str(&date_str, "%Y-%m-%d %H:%M")
+                && id_date.and_utc() > self.updated_at + chrono::Duration::hours(25)
+            {
+                return SessionHealth::Risk;
             }
         }
 
-        // c) Statistical Anomaly: Too large
         if self.size > MAX_SESSION_SIZE_BYTES {
             return SessionHealth::Risk;
         }
 
-        // 3. Warnings (Contextual)
+        // 3. Warnings (Host check is shallow)
         if self.host_path.as_ref().is_some_and(|h| !h.exists()) {
             return SessionHealth::Warn;
         }
-        if self.name.is_none() {
+
+        // If we have any structural or content notes but no name, it might be an error or warn
+        if !self.validation_notes.is_empty() && self.name.is_none() {
+            if self
+                .validation_notes
+                .iter()
+                .any(|n| n.contains("Structural"))
+            {
+                return SessionHealth::Error;
+            }
             return SessionHealth::Warn;
+        }
+
+        // If validation hasn't run yet, return Unknown instead of Ok
+        if self.name.is_none() {
+            return SessionHealth::Unknown;
         }
 
         SessionHealth::Ok
@@ -214,23 +238,39 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    fn test_lazy_loading() {
+        let tmp = tempdir().unwrap();
+        let path = tmp.path().join("session-2026-03-08T12-00-abcdef12.json");
+        fs::write(&path, r#"{"messages": [{"type":"user","content":"hi"}]}"#).unwrap();
+
+        let mut s = Session::from_path(&path, "p".into(), None).unwrap();
+        assert_eq!(s.health, SessionHealth::Unknown);
+        assert!(s.name.is_none());
+
+        s.deep_validate();
+        assert_eq!(s.health, SessionHealth::Ok);
+        assert_eq!(s.name, Some("hi".into()));
+    }
+
+    #[test]
     fn test_deep_validation() {
         let tmp = tempdir().unwrap();
 
         // 1. Structural Error
         let path_no_msg = tmp.path().join("session-2026-03-08T12-00-abcdef12.json");
         fs::write(&path_no_msg, r#"{"other": []}"#).unwrap();
-        let s_no_msg = Session::from_path(&path_no_msg, "p".into(), None).unwrap();
-        assert_eq!(s_no_msg.check_health(), SessionHealth::Error);
+        let mut s_no_msg = Session::from_path(&path_no_msg, "p".into(), None).unwrap();
+        s_no_msg.deep_validate();
+        assert_eq!(s_no_msg.health, SessionHealth::Error);
 
-        // 2. Valid ID pattern with non-hex but alphanumeric (supported for tests)
-        let path_alpha = tmp.path().join("session-2026-03-08T12-00-testID01.json");
+        // 2. Temporal Risk: ID is from far future
+        let path_future = tmp.path().join("session-2099-01-01T12-00-abcdef12.json");
         fs::write(
-            &path_alpha,
+            &path_future,
             r#"{"messages": [{"type":"user","content":"hi"}]}"#,
         )
         .unwrap();
-        let s_alpha = Session::from_path(&path_alpha, "p".into(), None).unwrap();
-        assert_eq!(s_alpha.check_health(), SessionHealth::Ok);
+        let s_future = Session::from_path(&path_future, "p".into(), None).unwrap();
+        assert_eq!(s_future.calculate_health(), SessionHealth::Risk);
     }
 }

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 pub fn session_to_markdown(session: &Session) -> Result<String> {
     let content = std::fs::read_to_string(&session.path)?;
     let json: serde_json::Value = serde_json::from_str(&content)?;
-    let mut markdown = format!("# Session: {}\n\n", session.id);
+    let mut markdown = String::new();
 
     if let Some(messages) = json.get("messages").and_then(|m| m.as_array()) {
         for msg in messages {
@@ -13,7 +13,15 @@ pub fn session_to_markdown(session: &Session) -> Result<String> {
                 .get("type")
                 .and_then(|t| t.as_str())
                 .unwrap_or("unknown");
-            markdown.push_str(&format!("## {}\n", role.to_uppercase()));
+
+            // Map roles to consistent headers
+            let display_role = match role {
+                "user" => "USER",
+                "assistant" => "GEMINI",
+                other => other,
+            };
+
+            markdown.push_str(&format!("## {}\n", display_role.to_uppercase()));
 
             let content_val = msg.get("content").unwrap_or(&serde_json::Value::Null);
             if let Some(text) = content_val.as_str() {
@@ -67,11 +75,11 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             size: 0,
+            health: crate::core::session::SessionHealth::Unknown,
             validation_notes: Vec::new(),
         };
 
         let md = session_to_markdown(&session).unwrap();
-        assert!(md.contains("# Session: test"));
         assert!(md.contains("## USER"));
         assert!(md.contains("hello"));
     }
@@ -80,7 +88,11 @@ mod tests {
     fn test_export_file_writing() {
         let tmp = tempdir().unwrap();
         let path = tmp.path().join("s.json");
-        fs::write(&path, r#"{"messages": []}"#).unwrap();
+        fs::write(
+            &path,
+            r#"{"messages": [{"type": "user", "content": "test"}]}"#,
+        )
+        .unwrap();
 
         let session = Session {
             id: "test_export".into(),
@@ -91,16 +103,13 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             size: 0,
+            health: crate::core::session::SessionHealth::Unknown,
             validation_notes: Vec::new(),
         };
 
         let out_path = tmp.path().join("test.md");
         let result = export_session(&session, Some(&out_path)).unwrap();
         assert!(result.exists());
-        assert!(
-            fs::read_to_string(result)
-                .unwrap()
-                .contains("# Session: test_export")
-        );
+        assert!(fs::read_to_string(result).unwrap().contains("## USER"));
     }
 }

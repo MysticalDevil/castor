@@ -1,5 +1,6 @@
 use crate::core::{Registry, Session};
 use crate::error::Result;
+use crate::ops::Executor;
 use std::collections::HashMap;
 
 pub enum InputMode {
@@ -15,6 +16,7 @@ pub enum Selection {
 
 pub struct App {
     pub registry: Registry,
+    pub executor: Executor,
     pub projects: Vec<String>,
     pub sessions_by_project: HashMap<String, Vec<Session>>,
     pub flat_items: Vec<Selection>, // Flattened tree for easy indexing
@@ -25,9 +27,10 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(registry: Registry) -> Self {
+    pub fn new(registry: Registry, executor: Executor) -> Self {
         Self {
             registry,
+            executor,
             projects: Vec::new(),
             sessions_by_project: HashMap::new(),
             flat_items: Vec::new(),
@@ -99,6 +102,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
     use std::fs;
     use tempfile::tempdir;
 
@@ -113,10 +117,17 @@ mod tests {
         )
         .unwrap();
 
-        let mut registry = Registry::new(tmp.path());
+        let mut registry = Registry::new(tmp.path(), &tmp.path().join("cache.json"));
         registry.reload().unwrap();
 
-        let mut app = App::new(registry);
+        let executor = Executor::new(Config {
+            gemini_sessions_path: tmp.path().to_path_buf(),
+            trash_path: tmp.path().join("trash"),
+            audit_path: tmp.path().join("audit"),
+            cache_path: tmp.path().join("cache"),
+            dry_run_by_default: true,
+        });
+        let mut app = App::new(registry, executor);
         app.reload().unwrap();
 
         // Items should be: [Project("proj1"), Session("session-...-aaaa1111.json")]

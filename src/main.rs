@@ -16,7 +16,10 @@ fn main() -> Result<()> {
     let config = Config::load(cli.config.as_deref())?;
     config.ensure_dirs()?;
 
-    let mut registry = Registry::new(&config.gemini_sessions_path);
+    let mut registry = Registry::new(
+        &config.gemini_sessions_path,
+        &config.cache_path.join("metadata.json"),
+    );
     let executor = Executor::new(config);
     let home_dir = std::env::var("HOME").ok();
     let stdout = io::stdout();
@@ -293,11 +296,11 @@ fn main() -> Result<()> {
             let mut no_root_file = 0;
 
             for s in sessions {
-                match s.check_health() {
+                match s.calculate_health() {
                     SessionHealth::Warn => orphaned += 1,
                     SessionHealth::Error => errors += 1,
                     SessionHealth::Risk => risks += 1,
-                    SessionHealth::Ok => {}
+                    SessionHealth::Unknown | SessionHealth::Ok => {}
                 }
                 if s.host_path.is_none() {
                     no_root_file += 1;

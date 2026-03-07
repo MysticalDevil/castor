@@ -50,6 +50,7 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             size: 1024,
+            health: crate::core::session::SessionHealth::Unknown,
             validation_notes: Vec::new(),
         };
 
@@ -57,6 +58,7 @@ mod tests {
             gemini_sessions_path: PathBuf::from("/tmp"),
             trash_path: PathBuf::from("/tmp/trash_non_existent"),
             audit_path: PathBuf::from("/tmp/audit"),
+            cache_path: PathBuf::from("/tmp/cache"),
             dry_run_by_default: true,
         };
 

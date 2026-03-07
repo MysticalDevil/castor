@@ -3,11 +3,12 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     pub gemini_sessions_path: PathBuf,
     pub trash_path: PathBuf,
     pub audit_path: PathBuf,
+    pub cache_path: PathBuf,
     pub dry_run_by_default: bool,
 }
 
@@ -28,6 +29,7 @@ impl Default for Config {
             gemini_sessions_path: default_gemini,
             trash_path: data_dir.join("trash"),
             audit_path: data_dir.join("audit"),
+            cache_path: data_dir.join("cache"),
             dry_run_by_default: true,
         }
     }
@@ -63,6 +65,7 @@ impl Config {
         std::fs::create_dir_all(&self.gemini_sessions_path)?;
         std::fs::create_dir_all(&self.trash_path)?;
         std::fs::create_dir_all(&self.audit_path)?;
+        std::fs::create_dir_all(&self.cache_path)?;
         Ok(())
     }
 }
@@ -87,6 +90,7 @@ mod tests {
             "gemini_sessions_path": "/tmp/gemini",
             "trash_path": "/tmp/trash",
             "audit_path": "/tmp/audit",
+            "cache_path": "/tmp/cache",
             "dry_run_by_default": false
         }"#;
         fs::write(&config_path, data).unwrap();
@@ -103,6 +107,7 @@ mod tests {
             gemini_sessions_path: tmp.path().join("sessions"),
             trash_path: tmp.path().join("trash"),
             audit_path: tmp.path().join("audit"),
+            cache_path: tmp.path().join("cache"),
             dry_run_by_default: true,
         };
 
@@ -110,5 +115,6 @@ mod tests {
         assert!(tmp.path().join("sessions").exists());
         assert!(tmp.path().join("trash").exists());
         assert!(tmp.path().join("audit").exists());
+        assert!(tmp.path().join("cache").exists());
     }
 }

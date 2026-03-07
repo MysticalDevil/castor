@@ -3,7 +3,7 @@ use crate::error::Result;
 use std::path::{Path, PathBuf};
 
 pub struct Scanner {
-    base_path: PathBuf,
+    pub base_path: PathBuf,
 }
 
 impl Scanner {

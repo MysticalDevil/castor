@@ -13,6 +13,7 @@ regex = "1.10"
 
 # TUI
 ratatui = "0.26"
+tui-markdown = "0.1.1"
 crossterm = { version = "0.27", features = ["events"] }
 
 # Serialization

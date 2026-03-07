@@ -45,6 +45,7 @@ pub fn render_cell(
         format!("{}{}", truncated.cyan().bold(), padding)
     } else if let Some(h) = health {
         let colored = match h {
+            SessionHealth::Unknown => truncated.dimmed(),
             SessionHealth::Ok => truncated.green(),
             SessionHealth::Warn => truncated.yellow(),
             SessionHealth::Error => truncated.red().bold(),
@@ -96,7 +97,7 @@ pub fn write_session_row<W: Write>(
 
     let head_raw = s.name.as_deref().unwrap_or("---");
     let updated = s.updated_at.format("%Y-%m-%d %H:%M").to_string();
-    let health = s.check_health();
+    let health = &s.health;
 
     writeln!(
         w,
@@ -104,7 +105,7 @@ pub fn write_session_row<W: Write>(
         render_cell(display_id, ID_W, false, None),
         render_cell(&updated, UPDATE_W, false, None),
         render_cell(&host_raw, HOST_W, false, None),
-        render_cell(&health.to_string(), HEALTH_W, false, Some(&health)),
+        render_cell(&health.to_string(), HEALTH_W, false, Some(health)),
         render_cell(head_raw, HEAD_W, false, None)
     )
 }
@@ -127,6 +128,7 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             size: 100,
+            health: crate::core::session::SessionHealth::Unknown,
             validation_notes: Vec::new(),
         };
 

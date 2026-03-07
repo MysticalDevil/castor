@@ -85,6 +85,6 @@ fn test_export_logic() {
     let session = &registry.list()[0];
     let md = export::session_to_markdown(session).unwrap();
 
-    assert!(md.contains("# Session:"));
+    assert!(md.contains("## USER"));
     assert!(md.contains("Markdown test"));
 }
