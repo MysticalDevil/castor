@@ -1,13 +1,23 @@
 use crate::core::{Registry, Session};
 use crate::error::Result;
+use std::collections::HashMap;
 
 pub enum InputMode {
     Normal,
     ConfirmDelete,
 }
 
+#[derive(Clone, PartialEq, Debug)]
+pub enum Selection {
+    Project(String),
+    Session(String),
+}
+
 pub struct App {
     pub registry: Registry,
+    pub projects: Vec<String>,
+    pub sessions_by_project: HashMap<String, Vec<Session>>,
+    pub flat_items: Vec<Selection>, // Flattened tree for easy indexing
     pub selected_index: usize,
     pub input_mode: InputMode,
     pub should_quit: bool,
@@ -18,6 +28,9 @@ impl App {
     pub fn new(registry: Registry) -> Self {
         Self {
             registry,
+            projects: Vec::new(),
+            sessions_by_project: HashMap::new(),
+            flat_items: Vec::new(),
             selected_index: 0,
             input_mode: InputMode::Normal,
             should_quit: false,
@@ -25,33 +38,90 @@ impl App {
         }
     }
 
+    pub fn reload(&mut self) -> Result<()> {
+        self.registry.reload()?;
+        self.sessions_by_project.clear();
+        self.projects.clear();
+        self.flat_items.clear();
+
+        for s in self.registry.list() {
+            let proj_id = s.project_id.clone();
+            self.sessions_by_project.entry(proj_id.clone()).or_insert_with(Vec::new).push(s.clone());
+        }
+
+        self.projects = self.sessions_by_project.keys().cloned().collect();
+        self.projects.sort();
+
+        // Build flat tree view: Project -> [Session, Session...]
+        for proj in &self.projects {
+            self.flat_items.push(Selection::Project(proj.clone()));
+            if let Some(sessions) = self.sessions_by_project.get(proj) {
+                for s in sessions {
+                    self.flat_items.push(Selection::Session(s.id.clone()));
+                }
+            }
+        }
+
+        if self.selected_index >= self.flat_items.len() && !self.flat_items.is_empty() {
+            self.selected_index = self.flat_items.len() - 1;
+        }
+        Ok(())
+    }
+
     pub fn next(&mut self) {
-        let count = self.registry.list().len();
-        if count > 0 {
-            self.selected_index = (self.selected_index + 1) % count;
+        if !self.flat_items.is_empty() {
+            self.selected_index = (self.selected_index + 1) % self.flat_items.len();
         }
     }
 
     pub fn previous(&mut self) {
-        let count = self.registry.list().len();
-        if count > 0 {
+        if !self.flat_items.is_empty() {
             if self.selected_index == 0 {
-                self.selected_index = count - 1;
+                self.selected_index = self.flat_items.len() - 1;
             } else {
                 self.selected_index -= 1;
             }
         }
     }
 
-    pub fn selected_session(&self) -> Option<&Session> {
-        self.registry.list().get(self.selected_index)
-    }
-
-    pub fn reload(&mut self) -> Result<()> {
-        self.registry.reload()?;
-        if self.selected_index >= self.registry.list().len() && !self.registry.list().is_empty() {
-            self.selected_index = self.registry.list().len() - 1;
+    pub fn get_selected_session(&self) -> Option<&Session> {
+        if let Some(Selection::Session(id)) = self.flat_items.get(self.selected_index) {
+            self.registry.find_by_id(id)
+        } else {
+            None
         }
-        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+    use std::fs;
+
+    #[test]
+    fn test_app_tree_navigation() {
+        let tmp = tempdir().unwrap();
+        let project_path = tmp.path().join("proj1/chats");
+        fs::create_dir_all(&project_path).unwrap();
+        fs::write(project_path.join("session-2026-03-08T12-00-aaaa1111.json"), "{}").unwrap();
+
+        let mut registry = Registry::new(tmp.path());
+        registry.reload().unwrap();
+        
+        let mut app = App::new(registry);
+        app.reload().unwrap();
+        
+        // Items should be: [Project("proj1"), Session("session-...-aaaa1111.json")]
+        assert_eq!(app.flat_items.len(), 2);
+        assert!(matches!(app.flat_items[0], Selection::Project(_)));
+        assert!(matches!(app.flat_items[1], Selection::Session(_)));
+        
+        assert_eq!(app.selected_index, 0);
+        app.next();
+        assert_eq!(app.selected_index, 1);
+        
+        let sel = app.get_selected_session().unwrap();
+        assert!(sel.id.contains("aaaa1111"));
     }
 }
