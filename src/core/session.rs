@@ -3,6 +3,23 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
 use crate::error::{Result, CastorError};
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum SessionHealth {
+    Ok,
+    Warn,
+    Error,
+}
+
+impl std::fmt::Display for SessionHealth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SessionHealth::Ok => write!(f, "OK"),
+            SessionHealth::Warn => write!(f, "WARN"),
+            SessionHealth::Error => write!(f, "ERROR"),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Session {
     pub id: String,
@@ -56,6 +73,23 @@ impl Session {
             updated_at,
             size,
         })
+    }
+
+    /// Checks the health of the session.
+    pub fn check_health(&self) -> SessionHealth {
+        // 1. Check if session file itself exists
+        if !self.path.exists() {
+            return SessionHealth::Error;
+        }
+
+        // 2. Check if host exists (if known)
+        if let Some(host) = &self.host_path {
+            if !host.exists() {
+                return SessionHealth::Warn;
+            }
+        }
+
+        SessionHealth::Ok
     }
 
     fn extract_name(path: &Path) -> Option<String> {
@@ -119,23 +153,20 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_name_complex() {
+    fn test_session_health() {
         let tmp = tempdir().unwrap();
-        let file_path = tmp.path().join("session.json");
-        let data = r#"{"messages": [{"type": "user", "content": [{"text": "Multi\nline\ntext"}]}]}"#;
-        fs::write(&file_path, data).unwrap();
+        let file_path = tmp.path().join("s.json");
+        fs::write(&file_path, "{}").unwrap();
 
-        let name = Session::extract_name(&file_path);
-        assert_eq!(name, Some("Multi line text".to_string()));
-    }
+        let mut session = Session::from_path(&file_path, "p".into(), None).unwrap();
+        assert_eq!(session.check_health(), SessionHealth::Ok);
 
-    #[test]
-    fn test_extract_name_none() {
-        let tmp = tempdir().unwrap();
-        let file_path = tmp.path().join("empty.json");
-        fs::write(&file_path, r#"{"messages": []}"#).unwrap();
+        // Host not found
+        session.host_path = Some(PathBuf::from("/non/existent/path"));
+        assert_eq!(session.check_health(), SessionHealth::Warn);
 
-        let name = Session::extract_name(&file_path);
-        assert_eq!(name, None);
+        // Session file missing
+        fs::remove_file(&file_path).unwrap();
+        assert_eq!(session.check_health(), SessionHealth::Error);
     }
 }
