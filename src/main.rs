@@ -4,6 +4,7 @@ use castor::core::Registry;
 use castor::error::Result;
 use castor::ops::Executor;
 use castor::utils::term::format_cell_raw;
+use castor::core::session::SessionHealth;
 use clap::{Parser, CommandFactory};
 use clap_complete::generate;
 use colored::Colorize;
@@ -12,12 +13,19 @@ use std::io;
 use chrono::{Utc, Duration};
 
 /// Formats a cell with fixed visual width and optional styling for the CLI.
-fn format_cell(text: &str, width: usize, is_header: bool) -> String {
+fn format_cell(text: &str, width: usize, is_header: bool, health: Option<&SessionHealth>) -> String {
     let (truncated, pad_count) = format_cell_raw(text, width);
     let padding = " ".repeat(pad_count);
     
     if is_header {
         format!("{}{}", truncated.cyan().bold(), padding)
+    } else if let Some(h) = health {
+        let colored = match h {
+            SessionHealth::Ok => truncated.green(),
+            SessionHealth::Warn => truncated.yellow(),
+            SessionHealth::Error => truncated.red().bold(),
+        };
+        format!("{}{}", colored, padding)
     } else {
         format!("{}{}", truncated, padding)
     }
@@ -27,18 +35,21 @@ fn print_list_header() {
     let id_w = 10;
     let update_w = 17;
     let host_w = 30;
+    let health_w = 8;
     let head_w = 30;
-    println!("{} {} {} {}", 
-        format_cell("ID", id_w, true),
-        format_cell("UPDATE", update_w, true),
-        format_cell("HOST", host_w, true),
-        format_cell("HEAD", head_w, true));
+    println!("{} {} {} {} {}", 
+        format_cell("ID", id_w, true, None),
+        format_cell("UPDATE", update_w, true, None),
+        format_cell("HOST", host_w, true, None),
+        format_cell("HEALTH", health_w, true, None),
+        format_cell("HEAD", head_w, true, None));
 }
 
 fn print_session(s: &castor::core::Session, home: Option<&str>) {
     let id_w = 10;
     let update_w = 17;
     let host_w = 30;
+    let health_w = 8;
     let head_w = 30;
 
     let display_id = s.id.strip_suffix(".json")
@@ -55,12 +66,14 @@ fn print_session(s: &castor::core::Session, home: Option<&str>) {
     
     let head_raw = s.name.as_deref().unwrap_or("---");
     let updated = s.updated_at.format("%Y-%m-%d %H:%M").to_string();
+    let health = s.check_health();
 
-    println!("{} {} {} {}", 
-        format_cell(display_id, id_w, false),
-        format_cell(&updated, update_w, false),
-        format_cell(&host_raw, host_w, false),
-        format_cell(head_raw, head_w, false));
+    println!("{} {} {} {} {}", 
+        format_cell(display_id, id_w, false, None),
+        format_cell(&updated, update_w, false, None),
+        format_cell(&host_raw, host_w, false, None),
+        format_cell(&health.to_string(), health_w, false, Some(&health)),
+        format_cell(head_raw, head_w, false, None));
 }
 
 fn main() -> Result<()> {
@@ -352,14 +365,16 @@ fn main() -> Result<()> {
             let sessions = registry.list();
             let total = sessions.len();
             let mut orphaned = 0;
+            let mut errors = 0;
             let mut no_root_file = 0;
 
             for s in sessions {
-                if let Some(path) = &s.host_path {
-                    if !path.exists() {
-                        orphaned += 1;
-                    }
-                } else {
+                match s.check_health() {
+                    SessionHealth::Warn => orphaned += 1,
+                    SessionHealth::Error => errors += 1,
+                    SessionHealth::Ok => {},
+                }
+                if s.host_path.is_none() {
                     no_root_file += 1;
                 }
             }
@@ -374,13 +389,18 @@ fn main() -> Result<()> {
                 println!("{:<25} {}", "Orphaned Sessions:", "0".green());
             }
 
+            if errors > 0 {
+                println!("{:<25} {}", "Corrupted Sessions:", errors.to_string().red().bold());
+                println!("   (Session files missing or unreadable)");
+            }
+
             if no_root_file > 0 {
                 println!("{:<25} {}", "Untracked Hosts:", no_root_file.to_string().yellow());
                 println!("   (Missing .project_root metadata)");
             }
 
-            if orphaned > 0 {
-                println!("\n{} Hint: Use `castor list` to find orphaned sessions or `prune` to clean up.", "ℹ".blue());
+            if orphaned > 0 || errors > 0 {
+                println!("\n{} Hint: Use `castor list` to find unhealthy sessions or `prune` to clean up.", "ℹ".blue());
             }
         }
         Some(Commands::Completions { shell }) => {

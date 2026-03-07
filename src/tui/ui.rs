@@ -53,13 +53,16 @@ pub fn render(app: &mut App, frame: &mut Frame) {
             };
             
             let head = s.name.as_deref().unwrap_or("---");
+            let health = s.check_health();
+            let health_str = health.to_string();
+            
             let head_truncated = if head.chars().count() > 15 {
                 format!("{}...", head.chars().take(12).collect::<String>())
             } else {
                 head.to_string()
             };
 
-            ListItem::new(format!("{:<12} | {:<20} | {:<20}", display_id, host, head_truncated)).style(style)
+            ListItem::new(format!("{:<12} | {:<20} | {:<6} | {:<20}", display_id, host, health_str, head_truncated)).style(style)
         })
         .collect();
 
