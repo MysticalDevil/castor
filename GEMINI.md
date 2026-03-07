@@ -43,6 +43,7 @@ Castor is a local session manager for the Gemini CLI, written in Rust. It provid
 - `src/audit/`: Audit logging and history tracking.
 - `src/tui/`: Ratatui-based terminal UI implementation.
 - `src/utils/`: Shared utilities (Path formatting, terminal alignment).
+- `scripts/`: All utility and helper scripts (Python, Bash, etc.). **Do not place scripts in the root directory.**
 
 ### Coding Style
 - **100% Safe Rust**: The use of `unsafe` blocks is strictly prohibited. All logic must be implemented using Safe Rust to leverage the compiler's full safety guarantees.
