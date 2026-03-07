@@ -2,80 +2,14 @@ use castor::cli::{Cli, Commands};
 use castor::config::Config;
 use castor::core::Registry;
 use castor::error::Result;
-use castor::ops::Executor;
-use castor::utils::term::format_cell_raw;
+use castor::ops::{Executor, export, prune, stats::StorageStats};
+use castor::utils::term::{write_list_header, write_session_row};
 use castor::core::session::SessionHealth;
 use clap::{Parser, CommandFactory};
 use clap_complete::generate;
 use colored::Colorize;
 use std::collections::HashMap;
 use std::io;
-use chrono::{Utc, Duration};
-
-/// Formats a cell with fixed visual width and optional styling for the CLI.
-fn format_cell(text: &str, width: usize, is_header: bool, health: Option<&SessionHealth>) -> String {
-    let (truncated, pad_count) = format_cell_raw(text, width);
-    let padding = " ".repeat(pad_count);
-    
-    if is_header {
-        format!("{}{}", truncated.cyan().bold(), padding)
-    } else if let Some(h) = health {
-        let colored = match h {
-            SessionHealth::Ok => truncated.green(),
-            SessionHealth::Warn => truncated.yellow(),
-            SessionHealth::Error => truncated.red().bold(),
-            SessionHealth::Risk => truncated.magenta().bold(),
-        };
-        format!("{}{}", colored, padding)
-    } else {
-        format!("{}{}", truncated, padding)
-    }
-}
-
-fn print_list_header() {
-    let id_w = 10;
-    let update_w = 17;
-    let host_w = 30;
-    let health_w = 8;
-    let head_w = 30;
-    println!("{} {} {} {} {}", 
-        format_cell("ID", id_w, true, None),
-        format_cell("UPDATE", update_w, true, None),
-        format_cell("HOST", host_w, true, None),
-        format_cell("HEALTH", health_w, true, None),
-        format_cell("HEAD", head_w, true, None));
-}
-
-fn print_session(s: &castor::core::Session, home: Option<&str>) {
-    let id_w = 10;
-    let update_w = 17;
-    let host_w = 30;
-    let health_w = 8;
-    let head_w = 30;
-
-    let display_id = s.id.strip_suffix(".json")
-        .unwrap_or(&s.id)
-        .split('-')
-        .last()
-        .unwrap_or(&s.id);
-    
-    let host_raw = if let Some(path) = &s.host_path {
-        castor::utils::fs::format_host(path, home)
-    } else {
-        s.project_id.clone()
-    };
-    
-    let head_raw = s.name.as_deref().unwrap_or("---");
-    let updated = s.updated_at.format("%Y-%m-%d %H:%M").to_string();
-    let health = s.check_health();
-
-    println!("{} {} {} {} {}", 
-        format_cell(display_id, id_w, false, None),
-        format_cell(&updated, update_w, false, None),
-        format_cell(&host_raw, host_w, false, None),
-        format_cell(&health.to_string(), health_w, false, Some(&health)),
-        format_cell(head_raw, head_w, false, None));
-}
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -85,6 +19,8 @@ fn main() -> Result<()> {
     let mut registry = Registry::new(&config.gemini_sessions_path);
     let executor = Executor::new(config);
     let home_dir = std::env::var("HOME").ok();
+    let stdout = io::stdout();
+    let mut handle = stdout.lock();
 
     match cli.command {
         Some(Commands::Tui) => {
@@ -109,9 +45,9 @@ fn main() -> Result<()> {
 
                 for (host, group_sessions) in groups {
                     println!("\n{}", host.yellow().bold());
-                    print_list_header();
+                    write_list_header(&mut handle)?;
                     for s in group_sessions {
-                        print_session(s, home_dir.as_deref());
+                        write_session_row(&mut handle, s, home_dir.as_deref())?;
                     }
                 }
             } else if page_size > 0 {
@@ -122,15 +58,15 @@ fn main() -> Result<()> {
                         let mut input = String::new();
                         std::io::stdin().read_line(&mut input).ok();
                     }
-                    print_list_header();
+                    write_list_header(&mut handle)?;
                     for s in chunk {
-                        print_session(s, home_dir.as_deref());
+                        write_session_row(&mut handle, s, home_dir.as_deref())?;
                     }
                 }
             } else {
-                print_list_header();
+                write_list_header(&mut handle)?;
                 for s in sessions {
-                    print_session(s, home_dir.as_deref());
+                    write_session_row(&mut handle, s, home_dir.as_deref())?;
                 }
             }
         }
@@ -140,34 +76,10 @@ fn main() -> Result<()> {
                 castor::error::CastorError::PathNotFound(std::path::PathBuf::from(id.clone()))
             })?;
 
-            let content = std::fs::read_to_string(&session.path)?;
             if raw {
-                println!("{}", content);
+                println!("{}", std::fs::read_to_string(&session.path)?);
             } else {
-                let json: serde_json::Value = serde_json::from_str(&content)?;
-                if let Some(messages) = json.get("messages").and_then(|m| m.as_array()) {
-                    for msg in messages {
-                        let role = msg.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
-                        let color_role = if role == "user" {
-                            role.blue().bold()
-                        } else {
-                            role.green().bold()
-                        };
-                        
-                        println!("\n--- {} ---", color_role);
-                        
-                        let content_val = msg.get("content").unwrap_or(&serde_json::Value::Null);
-                        if let Some(text) = content_val.as_str() {
-                            println!("{}", text);
-                        } else if let Some(arr) = content_val.as_array() {
-                            for item in arr {
-                                if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
-                                    println!("{}", text);
-                                }
-                            }
-                        }
-                    }
-                }
+                println!("{}", export::session_to_markdown(session)?);
             }
         }
         Some(Commands::Grep { pattern, ignore_case }) => {
@@ -193,9 +105,9 @@ fn main() -> Result<()> {
                 println!("No sessions found containing '{}'", pattern);
             } else {
                 println!("Found {} sessions containing '{}':", matches.len(), pattern);
-                print_list_header();
+                write_list_header(&mut handle)?;
                 for s in matches {
-                    print_session(s, home_dir.as_deref());
+                    write_session_row(&mut handle, s, home_dir.as_deref())?;
                 }
             }
         }
@@ -205,57 +117,17 @@ fn main() -> Result<()> {
                 castor::error::CastorError::PathNotFound(std::path::PathBuf::from(id.clone()))
             })?;
 
-            let content = std::fs::read_to_string(&session.path)?;
-            let json: serde_json::Value = serde_json::from_str(&content)?;
-            let mut markdown = format!("# Session: {}\n\n", session.id);
-
-            if let Some(messages) = json.get("messages").and_then(|m| m.as_array()) {
-                for msg in messages {
-                    let role = msg.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
-                    markdown.push_str(&format!("## {}\n", role.to_uppercase()));
-                    
-                    let content_val = msg.get("content").unwrap_or(&serde_json::Value::Null);
-                    if let Some(text) = content_val.as_str() {
-                        markdown.push_str(&format!("{}\n\n", text));
-                    } else if let Some(arr) = content_val.as_array() {
-                        for item in arr {
-                            if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
-                                markdown.push_str(&format!("{}\n\n", text));
-                            }
-                        }
-                    }
-                }
-            }
-
-            let out_path = output.unwrap_or_else(|| {
-                let mut p = std::path::PathBuf::from(&session.id);
-                p.set_extension("md");
-                p
-            });
-
-            std::fs::write(&out_path, markdown)?;
-            println!("Session exported to {}", out_path.display().to_string().green());
+            let path = export::export_session(session, output.as_deref())?;
+            println!("Session exported to {}", path.display().to_string().green());
         }
         Some(Commands::Stats) => {
             registry.reload()?;
-            let sessions = registry.list();
-            let total_size: u64 = sessions.iter().map(|s| s.size).sum();
+            let s = StorageStats::calculate(registry.list(), &executor.config);
             
             println!("{}", "Castor Storage Statistics".cyan().bold());
-            println!("{:<20} {}", "Total Sessions:", sessions.len());
-            println!("{:<20} {:.2} MB", "Total Size:", total_size as f64 / 1024.0 / 1024.0);
-            
-            let mut trash_size = 0;
-            if executor.config.trash_path.exists() {
-                for entry in walkdir::WalkDir::new(&executor.config.trash_path) {
-                    if let Ok(e) = entry {
-                        if e.file_type().is_file() {
-                            trash_size += e.metadata().map(|m| m.len()).unwrap_or(0);
-                        }
-                    }
-                }
-            }
-            println!("{:<20} {:.2} MB", "Trash Size:", trash_size as f64 / 1024.0 / 1024.0);
+            println!("{:<20} {}", "Total Sessions:", s.total_sessions);
+            println!("{:<20} {:.2} MB", "Total Size:", s.total_size_bytes as f64 / 1024.0 / 1024.0);
+            println!("{:<20} {:.2} MB", "Trash Size:", s.trash_size_bytes as f64 / 1024.0 / 1024.0);
         }
         Some(Commands::ClearTrash { confirm }) => {
             if !confirm {
@@ -270,11 +142,7 @@ fn main() -> Result<()> {
         }
         Some(Commands::Prune { days, hard, dry_run, confirm }) => {
             registry.reload()?;
-            let sessions = registry.list();
-            let threshold = Utc::now() - Duration::days(days as i64);
-            let to_prune: Vec<_> = sessions.iter()
-                .filter(|s| s.updated_at < threshold)
-                .collect();
+            let to_prune = prune::find_sessions_to_prune(registry.list(), days);
 
             if to_prune.is_empty() {
                 println!("No sessions older than {} days found.", days);
@@ -282,8 +150,9 @@ fn main() -> Result<()> {
             }
 
             println!("Found {} sessions to prune:", to_prune.len());
+            write_list_header(&mut handle)?;
             for s in &to_prune {
-                print_session(s, home_dir.as_deref());
+                write_session_row(&mut handle, s, home_dir.as_deref())?;
             }
 
             let is_actually_dry = dry_run && !confirm;
@@ -294,9 +163,9 @@ fn main() -> Result<()> {
                 println!("\nPruning {} sessions...", to_prune.len());
                 for s in to_prune {
                     if hard {
-                        executor.delete_hard(s, false)?;
+                        executor.delete_hard(&s, false)?;
                     } else {
-                        executor.delete_soft(s, false)?;
+                        executor.delete_soft(&s, false)?;
                     }
                 }
                 println!("{}", "Pruning complete.".green());
@@ -361,7 +230,7 @@ fn main() -> Result<()> {
                 println!("{} Trash directory NOT FOUND: {:?}", "✗".red(), executor.config.trash_path);
             }
 
-            // 2. Orphaned Session Detection
+            // 2. Integrity Detection
             registry.reload()?;
             let sessions = registry.list();
             let total = sessions.len();
@@ -387,27 +256,23 @@ fn main() -> Result<()> {
             
             if orphaned > 0 {
                 println!("{:<25} {}", "Orphaned Sessions:", orphaned.to_string().red().bold());
-                println!("   (Hosts no longer exist on disk)");
             } else {
                 println!("{:<25} {}", "Orphaned Sessions:", "0".green());
             }
 
             if errors > 0 {
                 println!("{:<25} {}", "Corrupted Sessions:", errors.to_string().red().bold());
-                println!("   (Session files missing or unreadable)");
             }
 
             if risks > 0 {
                 println!("{:<25} {}", "Untrusted Sessions:", risks.to_string().magenta().bold());
-                println!("   (Invalid ID pattern - potential tampering)");
             }
 
             if no_root_file > 0 {
                 println!("{:<25} {}", "Untracked Hosts:", no_root_file.to_string().yellow());
-                println!("   (Missing .project_root metadata)");
             }
 
-            if orphaned > 0 || errors > 0 {
+            if orphaned > 0 || errors > 0 || risks > 0 {
                 println!("\n{} Hint: Use `castor list` to find unhealthy sessions or `prune` to clean up.", "ℹ".blue());
             }
         }

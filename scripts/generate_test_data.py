@@ -29,23 +29,40 @@ CONTEXT = ["for the new dashboard", "in the legacy module", "to improve performa
 def gen_random_head():
     return f"{random.choice(ACTIONS)} {random.choice(TECH)} {random.choice(CONTEXT)}"
 
-def gen_realistic_filename(days_ago=0, seconds_offset=0):
-    dt = datetime.now() - timedelta(days=days_ago, seconds=seconds_offset)
+def gen_realistic_filename(days_ago=0, seconds_offset=0, future=False):
+    if future:
+        dt = datetime.now() + timedelta(days=365)
+    else:
+        dt = datetime.now() - timedelta(days=days_ago, seconds=seconds_offset)
     short_uuid = str(uuid.uuid4())[:8]
     return f"session-{dt.strftime('%Y-%m-%dT%H-%M')}-{short_uuid}.json"
 
-def create_random_session(project_id, days_ago=0, seconds_offset=0):
+def create_session(project_id, days_ago=0, seconds_offset=0, 
+                   is_corrupted=False, is_invalid_json=False, 
+                   is_missing_fields=False, is_future=False, 
+                   is_huge=False):
     path = os.path.join(gemini_tmp, project_id, "chats")
     os.makedirs(path, exist_ok=True)
     
-    file_name = gen_realistic_filename(days_ago, seconds_offset)
+    file_name = gen_realistic_filename(days_ago, seconds_offset, future=is_future)
     file_path = os.path.join(path, file_name)
     
-    head_text = gen_random_head()
-    data = {"messages": [{"type": "user", "content": head_text}]}
-    
-    with open(file_path, "w") as f:
-        json.dump(data, f)
+    if is_corrupted:
+        with open(file_path, "w") as f: pass
+    elif is_invalid_json:
+        with open(file_path, "w") as f: f.write("{ broken: [")
+    elif is_missing_fields:
+        with open(file_path, "w") as f: json.dump({"wrong_key": 123}, f)
+    elif is_huge:
+        # Create a file larger than 50MB
+        with open(file_path, "w") as f:
+            f.write('{"messages": [{"type": "user", "content": "I am huge"}]')
+            f.write(',"padding": "' + ("X" * 1024 * 1024 * 51) + '"}')
+    else:
+        head_text = gen_random_head()
+        data = {"messages": [{"type": "user", "content": head_text}]}
+        with open(file_path, "w") as f:
+            json.dump(data, f)
         
     mtime = time.time() - (days_ago * 86400) - seconds_offset
     os.utime(file_path, (mtime, mtime))
@@ -65,16 +82,25 @@ if os.path.exists(fixtures_src):
 RANDOM_PROJECTS = ["oss_contribution", "startup_mvp", "personal_blog", "learning_lab", "side_hustle"]
 
 print("Generating 100+ highly varied sessions...")
-random.seed(42) # Fixed seed for stable "randomness"
+random.seed(42)
 
-for i in range(120):
+# Normal bulk
+for i in range(100):
     proj = random.choice(RANDOM_PROJECTS)
     days = random.randint(0, 45)
     offset = random.randint(0, 86400)
-    create_random_session(proj, days, offset)
+    create_session(proj, days, offset)
+
+# EDGE CASES
+print("Injecting deep validation edge cases...")
+create_session("edge_cases", is_future=True)        # Temporal Risk
+create_session("edge_cases", is_huge=True)          # Statistical Risk
+create_session("edge_cases", is_missing_fields=True)# Structural Error
+create_session("edge_cases", is_invalid_json=True)  # Structural Error
+create_session("edge_cases", is_corrupted=True)     # structural Error (empty)
 
 # Setup .project_root for the fixed static project
 with open(os.path.join(gemini_tmp, "static_proj", ".project_root"), "w") as f:
     f.write(os.path.abspath("."))
 
-print(f"Highly varied mixed dataset ready in '{base_dir}/'.")
+print(f"Deep-validation dataset ready in '{base_dir}/'.")
