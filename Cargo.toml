@@ -1,0 +1,40 @@
+[package]
+name = "castor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# CLI Parsing
+clap = { version = "4", features = ["derive"] }
+colored = "2.1"
+unicode-width = "0.1"
+
+# TUI
+ratatui = "0.26"
+crossterm = { version = "0.27", features = ["events"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error Handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Files & Directories
+walkdir = "2.5"
+fs_extra = "1.3"
+directories = "5.0"
+
+# DateTime
+chrono = { version = "0.4", features = ["serde"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json"] }
+
+# UUID/Batch IDs
+uuid = { version = "1.8", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tempfile = "3.10"
