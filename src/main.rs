@@ -3,37 +3,16 @@ use castor::config::Config;
 use castor::core::Registry;
 use castor::error::Result;
 use castor::ops::Executor;
+use castor::utils::term::format_cell_raw;
 use clap::Parser;
 use colored::Colorize;
-use unicode_width::UnicodeWidthStr;
 use std::collections::HashMap;
 use chrono::{Utc, Duration};
 
-/// Truncates a string to a maximum visual width, adding ".." if truncated.
-fn truncate_visual(s: &str, max_width: usize) -> String {
-    if s.width() <= max_width {
-        return s.to_string();
-    }
-
-    let mut result = String::new();
-    let mut current_width = 0;
-    for c in s.chars() {
-        let char_width = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
-        if current_width + char_width + 2 > max_width {
-            result.push_str("..");
-            break;
-        }
-        result.push(c);
-        current_width += char_width;
-    }
-    result
-}
-
-/// Formats a cell with fixed visual width and optional styling.
+/// Formats a cell with fixed visual width and optional styling for the CLI.
 fn format_cell(text: &str, width: usize, is_header: bool) -> String {
-    let truncated = truncate_visual(text, width);
-    let visual_w = truncated.width();
-    let padding = " ".repeat(width.saturating_sub(visual_w));
+    let (truncated, pad_count) = format_cell_raw(text, width);
+    let padding = " ".repeat(pad_count);
     
     if is_header {
         format!("{}{}", truncated.cyan().bold(), padding)
@@ -54,7 +33,7 @@ fn print_list_header() {
         format_cell("HEAD", head_w, true));
 }
 
-fn print_session(s: &castor::core::Session) {
+fn print_session(s: &castor::core::Session, home: Option<&str>) {
     let id_w = 10;
     let update_w = 17;
     let host_w = 30;
@@ -67,7 +46,7 @@ fn print_session(s: &castor::core::Session) {
         .unwrap_or(&s.id);
     
     let host_raw = if let Some(path) = &s.host_path {
-        castor::utils::fs::format_host(path)
+        castor::utils::fs::format_host(path, home)
     } else {
         s.project_id.clone()
     };
@@ -89,6 +68,7 @@ fn main() -> Result<()> {
 
     let mut registry = Registry::new(&config.gemini_sessions_path);
     let executor = Executor::new(config);
+    let home_dir = std::env::var("HOME").ok();
 
     match cli.command {
         Some(Commands::Tui) => {
@@ -104,7 +84,7 @@ fn main() -> Result<()> {
                 let mut groups: HashMap<String, Vec<&castor::core::Session>> = HashMap::new();
                 for s in sessions {
                     let host = if let Some(path) = &s.host_path {
-                        castor::utils::fs::format_host(path)
+                        castor::utils::fs::format_host(path, home_dir.as_deref())
                     } else {
                         s.project_id.clone()
                     };
@@ -115,7 +95,7 @@ fn main() -> Result<()> {
                     println!("\n{}", host.yellow().bold());
                     print_list_header();
                     for s in group_sessions {
-                        print_session(s);
+                        print_session(s, home_dir.as_deref());
                     }
                 }
             } else if page_size > 0 {
@@ -128,13 +108,13 @@ fn main() -> Result<()> {
                     }
                     print_list_header();
                     for s in chunk {
-                        print_session(s);
+                        print_session(s, home_dir.as_deref());
                     }
                 }
             } else {
                 print_list_header();
                 for s in sessions {
-                    print_session(s);
+                    print_session(s, home_dir.as_deref());
                 }
             }
         }
@@ -148,7 +128,6 @@ fn main() -> Result<()> {
             if raw {
                 println!("{}", content);
             } else {
-                // Simplified Markdown-like rendering
                 let json: serde_json::Value = serde_json::from_str(&content)?;
                 if let Some(messages) = json.get("messages").and_then(|m| m.as_array()) {
                     for msg in messages {
@@ -172,8 +151,6 @@ fn main() -> Result<()> {
                             }
                         }
                     }
-                } else {
-                    println!("{}", "Could not parse session messages.".red());
                 }
             }
         }
@@ -192,7 +169,7 @@ fn main() -> Result<()> {
 
             println!("Found {} sessions to prune:", to_prune.len());
             for s in &to_prune {
-                print_session(s);
+                print_session(s, home_dir.as_deref());
             }
 
             let is_actually_dry = dry_run && !confirm;
@@ -248,8 +225,6 @@ fn main() -> Result<()> {
         }
         Some(Commands::Doctor) => {
             println!("{}", "Castor Doctor - Environment Diagnostics".cyan().bold());
-            
-            // Check Gemini Home
             let home = std::env::var("HOME").map(std::path::PathBuf::from).unwrap_or_default();
             let gemini_base = home.join(".gemini");
             if gemini_base.exists() {
@@ -257,29 +232,14 @@ fn main() -> Result<()> {
             } else {
                 println!("{} Gemini base directory NOT FOUND at {:?}", "✗".red(), gemini_base);
             }
-
-            // Check Sessions Path
             if executor.config.gemini_sessions_path.exists() {
                 println!("{} Sessions path: {:?}", "✓".green(), executor.config.gemini_sessions_path);
-            } else {
-                println!("{} Sessions path NOT FOUND: {:?}", "✗".red(), executor.config.gemini_sessions_path);
             }
-
-            // Check Trash Path
             if executor.config.trash_path.exists() {
                 println!("{} Trash directory: {:?}", "✓".green(), executor.config.trash_path);
-            } else {
-                println!("{} Trash directory NOT FOUND: {:?}", "✗".red(), executor.config.trash_path);
             }
-
-            // Scan check
             registry.reload()?;
-            let count = registry.list().len();
-            println!("{} Detected sessions: {}", "✓".green(), count);
-
-            if count == 0 {
-                println!("{} Hint: Ensure you have used Gemini CLI at least once.", "ℹ".blue());
-            }
+            println!("{} Detected sessions: {}", "✓".green(), registry.list().len());
         }
         None => {
             println!("Use --help for available commands");

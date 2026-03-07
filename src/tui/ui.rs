@@ -46,7 +46,8 @@ pub fn render(app: &mut App, frame: &mut Frame) {
                 .unwrap_or(&s.id);
             
             let host = if let Some(path) = &s.host_path {
-                crate::utils::fs::format_host(path)
+                let home = std::env::var("HOME").ok();
+                crate::utils::fs::format_host(path, home.as_deref())
             } else {
                 s.project_id.clone()
             };
