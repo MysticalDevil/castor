@@ -126,6 +126,7 @@ mod tests {
             audit_path: tmp.path().join("audit"),
             cache_path: tmp.path().join("cache"),
             dry_run_by_default: true,
+            icon_set: crate::utils::icons::IconSet::Ascii,
         });
         let mut app = App::new(registry, executor);
         app.reload().unwrap();

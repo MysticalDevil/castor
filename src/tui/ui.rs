@@ -1,6 +1,7 @@
 use crate::core::session::SessionHealth;
 use crate::ops::export;
 use crate::tui::app::{App, InputMode, Selection};
+use crate::utils::icons::Icons;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -32,49 +33,49 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 }
 
 fn render_tree(app: &App, frame: &mut Frame, area: Rect) {
-    let items: Vec<ListItem> = app
-        .flat_items
-        .iter()
-        .enumerate()
-        .map(|(i, sel)| {
-            let style = if i == app.selected_index {
-                Style::default()
-                    .bg(Color::DarkGray)
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
+    let icons = Icons::get(app.executor.config.icon_set);
+    let items: Vec<ListItem> =
+        app.flat_items
+            .iter()
+            .enumerate()
+            .map(|(i, sel)| {
+                let style = if i == app.selected_index {
+                    Style::default()
+                        .bg(Color::DarkGray)
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
 
-            match sel {
-                Selection::Project(id) => {
-                    ListItem::new(format!("📁 {}", id)).style(style.fg(Color::Cyan))
+                match sel {
+                    Selection::Project(id) => ListItem::new(format!("{} {}", icons.folder, id))
+                        .style(style.fg(Color::Cyan)),
+                    Selection::Session(id) => {
+                        let session = app.registry.find_by_id(id).unwrap();
+                        let health_symbol = match session.health {
+                            SessionHealth::Unknown => Span::raw(icons.unknown).fg(Color::DarkGray),
+                            SessionHealth::Ok => Span::raw(icons.ok).green(),
+                            SessionHealth::Warn => Span::raw(icons.warn).yellow(),
+                            SessionHealth::Error => Span::raw(icons.error).red(),
+                            SessionHealth::Risk => Span::raw(icons.risk).magenta(),
+                        };
+                        let display_id = id
+                            .strip_suffix(".json")
+                            .unwrap_or(id)
+                            .split('-')
+                            .next_back()
+                            .unwrap_or(id);
+                        ListItem::new(Line::from(vec![
+                            Span::raw(format!("  {} ", icons.chat)),
+                            health_symbol,
+                            Span::raw(format!(" {}", display_id)),
+                        ]))
+                        .style(style)
+                    }
                 }
-                Selection::Session(id) => {
-                    let session = app.registry.find_by_id(id).unwrap();
-                    let health_symbol = match session.health {
-                        SessionHealth::Unknown => Span::raw("○").fg(Color::DarkGray),
-                        SessionHealth::Ok => Span::raw("●").green(),
-                        SessionHealth::Warn => Span::raw("▲").yellow(),
-                        SessionHealth::Error => Span::raw("✖").red(),
-                        SessionHealth::Risk => Span::raw("⚠").magenta(),
-                    };
-                    let display_id = id
-                        .strip_suffix(".json")
-                        .unwrap_or(id)
-                        .split('-')
-                        .next_back()
-                        .unwrap_or(id);
-                    ListItem::new(Line::from(vec![
-                        Span::raw("  "),
-                        health_symbol,
-                        Span::raw(format!(" {}", display_id)),
-                    ]))
-                    .style(style)
-                }
-            }
-        })
-        .collect();
+            })
+            .collect();
 
     let list = List::new(items)
         .block(

@@ -1,4 +1,5 @@
 use crate::error::{CastorError, Result};
+use crate::utils::icons::IconSet;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -10,6 +11,7 @@ pub struct Config {
     pub audit_path: PathBuf,
     pub cache_path: PathBuf,
     pub dry_run_by_default: bool,
+    pub icon_set: IconSet,
 }
 
 impl Default for Config {
@@ -31,6 +33,7 @@ impl Default for Config {
             audit_path: data_dir.join("audit"),
             cache_path: data_dir.join("cache"),
             dry_run_by_default: true,
+            icon_set: IconSet::default(),
         }
     }
 }
@@ -80,6 +83,7 @@ mod tests {
     fn test_config_default() {
         let config = Config::default();
         assert!(config.dry_run_by_default);
+        assert_eq!(config.icon_set, IconSet::NerdFont);
     }
 
     #[test]
@@ -91,13 +95,15 @@ mod tests {
             "trash_path": "/tmp/trash",
             "audit_path": "/tmp/audit",
             "cache_path": "/tmp/cache",
-            "dry_run_by_default": false
+            "dry_run_by_default": false,
+            "icon_set": "Unicode"
         }"#;
         fs::write(&config_path, data).unwrap();
 
         let config = Config::load(Some(&config_path)).unwrap();
         assert!(!config.dry_run_by_default);
         assert_eq!(config.gemini_sessions_path, PathBuf::from("/tmp/gemini"));
+        assert_eq!(config.icon_set, IconSet::Unicode);
     }
 
     #[test]
@@ -109,6 +115,7 @@ mod tests {
             audit_path: tmp.path().join("audit"),
             cache_path: tmp.path().join("cache"),
             dry_run_by_default: true,
+            icon_set: IconSet::Ascii,
         };
 
         config.ensure_dirs().unwrap();

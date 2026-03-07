@@ -29,6 +29,7 @@ impl TestContext {
             audit_path,
             cache_path: base.join("cache"),
             dry_run_by_default: false,
+            icon_set: castor::utils::icons::IconSet::Ascii,
         };
 
         Self {
