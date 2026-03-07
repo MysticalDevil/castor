@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 # CLI Parsing
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4.5"
 colored = "2.1"
 unicode-width = "0.1"
 

@@ -1,5 +1,6 @@
 use clap::builder::styling::{AnsiColor, Styles};
 use clap::{Parser, Subcommand};
+use clap_complete::Shell;
 use std::path::PathBuf;
 
 // Define a professional Rust CLI style palette
@@ -53,6 +54,36 @@ pub enum Commands {
         /// Display raw JSON instead of pretty-printed content
         #[arg(long)]
         raw: bool,
+    },
+
+    /// Search for a pattern within session contents
+    Grep {
+        /// The pattern to search for
+        pattern: String,
+
+        /// Case-insensitive search
+        #[arg(short, long)]
+        ignore_case: bool,
+    },
+
+    /// Export a session to a file (Markdown)
+    Export {
+        /// The ID of the session to export
+        id: String,
+
+        /// Target file path
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+
+    /// Show storage statistics
+    Stats,
+
+    /// Permanently remove all sessions from the trash
+    ClearTrash {
+        /// Confirm the operation
+        #[arg(long)]
+        confirm: bool,
     },
 
     /// Remove old sessions based on a strategy
@@ -111,4 +142,11 @@ pub enum Commands {
 
     /// Check the health of the Gemini environment and configuration
     Doctor,
+
+    /// Generate shell completion scripts
+    Completions {
+        /// Target shell
+        #[arg(value_enum)]
+        shell: Shell,
+    },
 }
