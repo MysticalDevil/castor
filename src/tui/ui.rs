@@ -1,85 +1,126 @@
-use crate::tui::app::{App, InputMode};
 use ratatui::{
-    Frame,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    text::{Line, Span},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
+    Frame,
 };
+use crate::tui::app::{App, InputMode, Selection};
+use crate::core::session::SessionHealth;
+use crate::ops::export;
 
 pub fn render(app: &mut App, frame: &mut Frame) {
-    let chunks = Layout::default()
+    let root_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
             Constraint::Min(0),
-            Constraint::Length(3),
+            Constraint::Length(1), // Keys bar
         ])
         .split(frame.size());
 
-    // Title
-    let title = Paragraph::new("Castor: Gemini Session Manager").block(
-        Block::default()
-            .borders(Borders::ALL)
-            .style(Style::default().fg(Color::Cyan)),
-    );
-    frame.render_widget(title, chunks[0]);
+    let main_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(30), // Left tree
+            Constraint::Percentage(70), // Right panels
+        ])
+        .split(root_layout[0]);
 
-    // Main area (Sessions List)
-    let sessions: Vec<ListItem> = app
-        .registry
-        .list()
-        .iter()
-        .enumerate()
-        .map(|(i, s)| {
-            let style = if i == app.selected_index {
-                Style::default()
-                    .bg(Color::DarkGray)
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
-            let display_id = s.id.strip_suffix(".json")
-                .unwrap_or(&s.id)
-                .split('-')
-                .last()
-                .unwrap_or(&s.id);
-            
-            let host = if let Some(path) = &s.host_path {
-                let home = std::env::var("HOME").ok();
-                crate::utils::fs::format_host(path, home.as_deref())
-            } else {
-                s.project_id.clone()
-            };
-            
-            let head = s.name.as_deref().unwrap_or("---");
-            let health = s.check_health();
-            let health_str = health.to_string();
-            
-            let head_truncated = if head.chars().count() > 15 {
-                format!("{}...", head.chars().take(12).collect::<String>())
-            } else {
-                head.to_string()
-            };
+    render_tree(app, frame, main_layout[0]);
+    render_details(app, frame, main_layout[1]);
+    render_keys_bar(app, frame, root_layout[1]);
+}
 
-            ListItem::new(format!("{:<12} | {:<20} | {:<6} | {:<20}", display_id, host, health_str, head_truncated)).style(style)
-        })
-        .collect();
+fn render_tree(app: &App, frame: &mut Frame, area: Rect) {
+    let items: Vec<ListItem> = app.flat_items.iter().enumerate().map(|(i, sel)| {
+        let style = if i == app.selected_index {
+            Style::default().bg(Color::DarkGray).fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
 
-    let list = List::new(sessions)
-        .block(Block::default().title("Sessions").borders(Borders::ALL))
-        .highlight_style(Style::default().add_modifier(Modifier::BOLD))
-        .highlight_symbol(">> ");
+        match sel {
+            Selection::Project(id) => {
+                ListItem::new(format!("📁 {}", id)).style(style.fg(Color::Cyan))
+            }
+            Selection::Session(id) => {
+                let session = app.registry.find_by_id(id).unwrap();
+                let health_symbol = match session.check_health() {
+                    SessionHealth::Ok => "●".green(),
+                    SessionHealth::Warn => "▲".yellow(),
+                    SessionHealth::Error => "✖".red(),
+                    SessionHealth::Risk => "⚠".magenta(),
+                };
+                let display_id = id.strip_suffix(".json").unwrap_or(id).split('-').last().unwrap_or(id);
+                ListItem::new(Line::from(vec![
+                    Span::raw("  "),
+                    health_symbol,
+                    Span::raw(format!(" {}", display_id)),
+                ])).style(style)
+            }
+        }
+    }).collect();
 
-    frame.render_widget(list, chunks[1]);
+    let list = List::new(items)
+        .block(Block::default().title(" Projects / Sessions ").borders(Borders::ALL))
+        .highlight_symbol("> ");
+    frame.render_widget(list, area);
+}
 
-    // Footer / Help
-    let help_text = match app.input_mode {
-        InputMode::Normal => " [q] Quit | [j/k] Up/Down | [d] Delete | [r] Reload",
-        InputMode::ConfirmDelete => " Confirm Delete? [y] Yes | [n] No",
+fn render_details(app: &App, frame: &mut Frame, area: Rect) {
+    let details_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(8), // File Status
+            Constraint::Min(0),    // Conversation Preview
+        ])
+        .split(area);
+
+    if let Some(session) = app.get_selected_session() {
+        // 1. File Status Panel
+        let home = std::env::var("HOME").ok();
+        let host_display = session.host_path.as_ref()
+            .map(|p| crate::utils::fs::format_host(p, home.as_deref()))
+            .unwrap_or_else(|| "Unknown".to_string());
+
+        let status_text = vec![
+            Line::from(vec![Span::bold("ID:       "), Span::raw(&session.id)]),
+            Line::from(vec![Span::bold("Project:  "), Span::raw(&session.project_id)]),
+            Line::from(vec![Span::bold("Host:     "), Span::raw(host_display)]),
+            Line::from(vec![Span::bold("Updated:  "), Span::raw(session.updated_at.format("%Y-%m-%d %H:%M:%S").to_string())]),
+            Line::from(vec![Span::bold("Size:     "), Span::raw(format!("{:.2} KB", session.size as f64 / 1024.0))]),
+            Line::from(vec![Span::bold("Health:   "), Span::raw(format!("{}", session.check_health()))]),
+        ];
+
+        let status_block = Paragraph::new(status_text)
+            .block(Block::default().title(" File Status ").borders(Borders::ALL));
+        frame.render_widget(status_block, details_layout[0]);
+
+        // 2. Conversation Preview Panel
+        let preview_content = match export::session_to_markdown(session) {
+            Ok(md) => md,
+            Err(_) => "Error reading session content.".to_string(),
+        };
+
+        let preview_block = Paragraph::new(preview_content)
+            .block(Block::default().title(" Conversation Preview ").borders(Borders::ALL))
+            .wrap(Wrap { trim: true });
+        frame.render_widget(preview_block, details_layout[1]);
+    } else {
+        let placeholder = Paragraph::new("Select a session to view details")
+            .block(Block::default().borders(Borders::ALL))
+            .alignment(ratatui::layout::Alignment::Center);
+        frame.render_widget(placeholder, area);
+    }
+}
+
+fn render_keys_bar(app: &App, frame: &mut Frame, area: Rect) {
+    let keys = match app.input_mode {
+        InputMode::Normal => " [q] Quit | [j/k] Navigate | [d] Delete | [r] Reload | [Enter] Select ",
+        InputMode::ConfirmDelete => " Confirm Delete? [y] Yes | [n] No ",
     };
-
-    let footer = Paragraph::new(app.message.as_deref().unwrap_or(help_text))
-        .block(Block::default().borders(Borders::ALL));
-    frame.render_widget(footer, chunks[2]);
+    
+    let style = Style::default().bg(Color::Cyan).fg(Color::Black);
+    let bar = Paragraph::new(keys).style(style);
+    frame.render_widget(bar, area);
 }
