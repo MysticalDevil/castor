@@ -326,20 +326,62 @@ fn main() -> Result<()> {
         Some(Commands::Doctor) => {
             println!("{}", "Castor Doctor - Environment Diagnostics".cyan().bold());
             let home = std::env::var("HOME").map(std::path::PathBuf::from).unwrap_or_default();
+            
+            // 1. Basic Directory Checks
             let gemini_base = home.join(".gemini");
             if gemini_base.exists() {
                 println!("{} Gemini base directory: {:?}", "✓".green(), gemini_base);
             } else {
                 println!("{} Gemini base directory NOT FOUND at {:?}", "✗".red(), gemini_base);
             }
+
             if executor.config.gemini_sessions_path.exists() {
                 println!("{} Sessions path: {:?}", "✓".green(), executor.config.gemini_sessions_path);
+            } else {
+                println!("{} Sessions path NOT FOUND: {:?}", "✗".red(), executor.config.gemini_sessions_path);
             }
+
             if executor.config.trash_path.exists() {
                 println!("{} Trash directory: {:?}", "✓".green(), executor.config.trash_path);
+            } else {
+                println!("{} Trash directory NOT FOUND: {:?}", "✗".red(), executor.config.trash_path);
             }
+
+            // 2. Orphaned Session Detection
             registry.reload()?;
-            println!("{} Detected sessions: {}", "✓".green(), registry.list().len());
+            let sessions = registry.list();
+            let total = sessions.len();
+            let mut orphaned = 0;
+            let mut no_root_file = 0;
+
+            for s in sessions {
+                if let Some(path) = &s.host_path {
+                    if !path.exists() {
+                        orphaned += 1;
+                    }
+                } else {
+                    no_root_file += 1;
+                }
+            }
+
+            println!("\n{}", "Session Integrity:".yellow().bold());
+            println!("{:<25} {}", "Total Sessions:", total);
+            
+            if orphaned > 0 {
+                println!("{:<25} {}", "Orphaned Sessions:", orphaned.to_string().red().bold());
+                println!("   (Hosts no longer exist on disk)");
+            } else {
+                println!("{:<25} {}", "Orphaned Sessions:", "0".green());
+            }
+
+            if no_root_file > 0 {
+                println!("{:<25} {}", "Untracked Hosts:", no_root_file.to_string().yellow());
+                println!("   (Missing .project_root metadata)");
+            }
+
+            if orphaned > 0 {
+                println!("\n{} Hint: Use `castor list` to find orphaned sessions or `prune` to clean up.", "ℹ".blue());
+            }
         }
         Some(Commands::Completions { shell }) => {
             let mut cmd = Cli::command();
