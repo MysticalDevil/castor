@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import uuid
 from datetime import datetime, timedelta
 
 base_dir = "test_data"
@@ -17,31 +18,41 @@ projects = [
     {"id": "castor_dev_hash", "root": "/home/omega/Projects/castor", "name": "Castor Development"},
     {"id": "rust_learning_hash", "root": "/home/omega/Learning/rust-basics", "name": "Rust Learning"},
     {"id": "web_project_hash", "root": "/var/www/my-app", "name": "Web Project"},
-    {"id": "long_path_project_hash", "root": "/home/omega/Work/Clients/AcmeCorp/ProjectX/ModuleY/SubModuleZ", "name": "Deep Project"},
+    {"id": "broken_project_hash", "root": "/non/existent/path/for/warning", "name": "Missing Host Project"},
     {"id": "no_root_project_hash", "root": None, "name": "Orphaned Project"}
 ]
 
-def create_session(project_id, session_id, head_text, days_ago=0, content_lines=None):
+def gen_realistic_filename(days_ago=0):
+    dt = datetime.now() - timedelta(days=days_ago)
+    short_uuid = str(uuid.uuid4())[:8]
+    return f"session-{dt.strftime('%Y-%m-%dT%H-%M')}-{short_uuid}.json"
+
+def create_session(project_id, head_text, days_ago=0, content_lines=None, is_corrupted=False):
     path = os.path.join(gemini_tmp, project_id, "chats")
     os.makedirs(path, exist_ok=True)
     
-    file_path = os.path.join(path, f"session-{session_id}.json")
+    file_name = gen_realistic_filename(days_ago)
+    file_path = os.path.join(path, file_name)
     
-    messages = [{"type": "user", "content": [{"text": head_text}]}]
-    if content_lines:
-        for role, text in content_lines:
-            messages.append({"type": role, "content": [{"text": text}]})
-            
-    data = {"messages": messages}
-    
-    with open(file_path, "w") as f:
-        json.dump(data, f)
+    if is_corrupted:
+        # Create an empty file to trigger ERROR state
+        with open(file_path, "w") as f:
+            pass
+    else:
+        messages = [{"type": "user", "content": [{"text": head_text}]}]
+        if content_lines:
+            for role, text in content_lines:
+                messages.append({"type": role, "content": [{"text": text}]})
+                
+        data = {"messages": messages}
+        with open(file_path, "w") as f:
+            json.dump(data, f)
         
     # Adjust timestamps
     mtime = time.time() - (days_ago * 86400)
     os.utime(file_path, (mtime, mtime))
 
-# Generate data
+# Generate Project Roots
 for p in projects:
     p_path = os.path.join(gemini_tmp, p["id"])
     os.makedirs(p_path, exist_ok=True)
@@ -49,32 +60,22 @@ for p in projects:
         with open(os.path.join(p_path, ".project_root"), "w") as f:
             f.write(p["root"])
 
-# Project: Castor Development
-create_session("castor_dev_hash", "2026-03-08-01", "Implement doctor command", 0)
-create_session("castor_dev_hash", "2026-03-07-02", "Fix alignment issues with CJK characters", 1)
-create_session("castor_dev_hash", "2026-02-20-03", "Initial architecture discussion\nwith multiple lines", 16)
+# Project: Castor Development (Healthy)
+create_session("castor_dev_hash", "Implement doctor command", 0)
+create_session("castor_dev_hash", "Fix alignment issues", 1)
 
-# Project: Rust Learning (Lots of small sessions for paging)
-for i in range(1, 15):
-    create_session("rust_learning_hash", f"lesson-{i:02d}", f"Learning Rust Lesson {i}", i)
+# Project: Rust Learning (Lots of healthy sessions)
+for i in range(1, 10):
+    create_session("rust_learning_hash", f"Learning Rust Lesson {i}", i)
 
-# Project: Web Project (Rich content for 'cat')
-create_session("web_project_hash", "api-design", "Design a REST API for the user module", 2, [
-    ("assistant", "Sure! I suggest using Express.js with the following endpoints..."),
-    ("user", "What about authentication?"),
-    ("assistant", "You should use JWT for stateless authentication.")
-])
+# Project: Broken Project (WARN state - host path doesn't exist)
+create_session("broken_project_hash", "This session's host is missing", 2)
 
-# Project: Deep Project (Test path truncation)
-create_session("long_path_project_hash", "deep-file", "Testing very long host paths", 5)
+# Project: Web Project (Includes an ERROR session)
+create_session("web_project_hash", "Design a REST API", 3)
+create_session("web_project_hash", "CORRUPTED SESSION", 4, is_corrupted=True)
 
-# Project: Orphaned (Test fallback display)
-create_session("no_root_project_hash", "orphan-1", "A session without a known host", 40) # Old session for pruning
+# Project: Orphaned (Untracked)
+create_session("no_root_project_hash", "A session without a known host", 40)
 
-# Simulated Trash
-trash_p = os.path.join(trash_dir, "rust_learning_hash")
-os.makedirs(trash_p, exist_ok=True)
-with open(os.path.join(trash_p, "old-garbage.json"), "w") as f:
-    json.dump({"messages": []}, f)
-
-print("Rich test data generated successfully in 'test_data/'.")
+print("More realistic and diverse test data generated successfully in 'test_data/'.")

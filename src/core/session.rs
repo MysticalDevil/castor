@@ -82,7 +82,12 @@ impl Session {
             return SessionHealth::Error;
         }
 
-        // 2. Check if host exists (if known)
+        // 2. Check if file is empty (usually means corrupted or interrupted)
+        if self.size == 0 {
+            return SessionHealth::Error;
+        }
+
+        // 3. Check if host exists (if known)
         if let Some(host) = &self.host_path {
             if !host.exists() {
                 return SessionHealth::Warn;
