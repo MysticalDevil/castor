@@ -27,6 +27,14 @@ pub enum Commands {
         /// Format output as JSON
         #[arg(long)]
         json: bool,
+
+        /// Group sessions by host project
+        #[arg(short, long)]
+        group: bool,
+
+        /// Number of sessions per page (0 for no paging)
+        #[arg(short, long, default_value_t = 0)]
+        page_size: usize,
     },
 
     /// Delete a specific session
@@ -39,7 +47,7 @@ pub enum Commands {
         hard: bool,
 
         /// Dry-run mode: show what would be done without actually deleting
-        #[arg(long, default_value_t = true)]
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         dry_run: bool,
 
         /// Confirm the operation (required for actual deletion)
@@ -49,8 +57,12 @@ pub enum Commands {
 
     /// Restore a session from the trash
     Restore {
-        /// The ID of the batch or session to restore
+        /// The ID of the session to restore
         id: String,
+
+        /// Dry-run mode: show what would be restored
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
     },
 
     /// Show audit history
@@ -59,4 +71,7 @@ pub enum Commands {
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
     },
+
+    /// Check the health of the Gemini environment and configuration
+    Doctor,
 }
