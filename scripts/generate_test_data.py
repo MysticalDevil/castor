@@ -13,7 +13,7 @@ trash_dir = os.path.join(base_dir, "trash")
 audit_dir = os.path.join(base_dir, "audit")
 fixtures_src = "tests/common/fixtures"
 
-# 1. Clean and Setup
+# 1. Reset Environment
 if os.path.exists(base_dir):
     shutil.rmtree(base_dir)
 
@@ -21,53 +21,7 @@ os.makedirs(gemini_tmp, exist_ok=True)
 os.makedirs(trash_dir, exist_ok=True)
 os.makedirs(audit_dir, exist_ok=True)
 
-# 2. Rich Topic Generation Logic
-ACTIONS = ["Debug", "Implement", "Refactor", "Research", "Optimize", "Document", "Test", "Discuss"]
-TECH = ["Rust macros", "Async/Await", "Ratatui TUI", "PostgreSQL schema", "REST API", "OpenAI API", "Kubernetes pods", "Docker multi-stage", "Regex patterns", "Memory leaks"]
-CONTEXT = ["for the new dashboard", "in the legacy module", "to improve performance", "with the team", "for security audit", "to reduce latency", "using standard library"]
-
-def gen_random_head():
-    return f"{random.choice(ACTIONS)} {random.choice(TECH)} {random.choice(CONTEXT)}"
-
-def gen_realistic_filename(days_ago=0, seconds_offset=0, future=False):
-    if future:
-        dt = datetime.now() + timedelta(days=365)
-    else:
-        dt = datetime.now() - timedelta(days=days_ago, seconds=seconds_offset)
-    short_uuid = str(uuid.uuid4())[:8]
-    return f"session-{dt.strftime('%Y-%m-%dT%H-%M')}-{short_uuid}.json"
-
-def create_session(project_id, days_ago=0, seconds_offset=0, 
-                   is_corrupted=False, is_invalid_json=False, 
-                   is_missing_fields=False, is_future=False, 
-                   is_huge=False):
-    path = os.path.join(gemini_tmp, project_id, "chats")
-    os.makedirs(path, exist_ok=True)
-    
-    file_name = gen_realistic_filename(days_ago, seconds_offset, future=is_future)
-    file_path = os.path.join(path, file_name)
-    
-    if is_corrupted:
-        with open(file_path, "w") as f: pass
-    elif is_invalid_json:
-        with open(file_path, "w") as f: f.write("{ broken: [")
-    elif is_missing_fields:
-        with open(file_path, "w") as f: json.dump({"wrong_key": 123}, f)
-    elif is_huge:
-        # Create a file larger than 50MB
-        with open(file_path, "w") as f:
-            f.write('{"messages": [{"type": "user", "content": "I am huge"}]')
-            f.write(',"padding": "' + ("X" * 1024 * 1024 * 51) + '"}')
-    else:
-        head_text = gen_random_head()
-        data = {"messages": [{"type": "user", "content": head_text}]}
-        with open(file_path, "w") as f:
-            json.dump(data, f)
-        
-    mtime = time.time() - (days_ago * 86400) - seconds_offset
-    os.utime(file_path, (mtime, mtime))
-
-# 3. Sync Static Fixtures
+# 2. Sync Static Fixtures (The "Grounded" part)
 if os.path.exists(fixtures_src):
     print(f"Loading static fixtures from {fixtures_src}...")
     for root, dirs, files in os.walk(fixtures_src):
@@ -78,29 +32,59 @@ if os.path.exists(fixtures_src):
             os.makedirs(os.path.dirname(dest_path), exist_ok=True)
             shutil.copy2(src_path, dest_path)
 
-# 4. Generate Varied Bulk Data
-RANDOM_PROJECTS = ["oss_contribution", "startup_mvp", "personal_blog", "learning_lab", "side_hustle"]
+# 3. Dynamic Generation Templates
+ACTIONS = ["Debug", "Refactor", "Optimize", "Audit", "Discuss", "Architect"]
+TECH = ["Rust generics", "Tokio Runtime", "WebGPU shaders", "Redis clusters", "CI/CD pipelines", "Memory profiling"]
+SCENARIOS = ["in production", "for the upcoming launch", "with legacy dependencies", "to reduce costs", "across multiple regions"]
 
-print("Generating 100+ highly varied sessions...")
-random.seed(42)
+def gen_realistic_filename(days_ago=0, seconds_offset=0, future=False):
+    dt = datetime.now() - timedelta(days=days_ago, seconds=seconds_offset)
+    if future:
+        dt += timedelta(days=400)
+    short_uuid = str(uuid.uuid4())[:8]
+    return f"session-{dt.strftime('%Y-%m-%dT%H-%M')}-{short_uuid}.json"
 
-# Normal bulk
+def create_bulk_session(project_id, days_ago=0, is_huge=False):
+    path = os.path.join(gemini_tmp, project_id, "chats")
+    os.makedirs(path, exist_ok=True)
+    
+    file_name = gen_realistic_filename(days_ago)
+    file_path = os.path.join(path, file_name)
+    
+    head = f"{random.choice(ACTIONS)} {random.choice(TECH)} {random.choice(SCENARIOS)}"
+    data = {"messages": [{"type": "user", "content": head}]}
+    
+    with open(file_path, "w") as f:
+        json.dump(data, f)
+        if is_huge:
+            f.write(" " * 1024 * 1024 * 51) # 51MB to trigger RISK
+            
+    mtime = time.time() - (days_ago * 86400)
+    os.utime(file_path, (mtime, mtime))
+
+# 4. Generate Data
+random.seed(1337)
+BULK_PROJECTS = ["open_source", "work_tasks", "private_logs"]
+
+print("Generating varied bulk data...")
+# Healthy bulk
 for i in range(100):
-    proj = random.choice(RANDOM_PROJECTS)
-    days = random.randint(0, 45)
-    offset = random.randint(0, 86400)
-    create_session(proj, days, offset)
+    proj = random.choice(BULK_PROJECTS)
+    create_bulk_session(proj, random.randint(0, 40))
 
-# EDGE CASES
-print("Injecting deep validation edge cases...")
-create_session("edge_cases", is_future=True)        # Temporal Risk
-create_session("edge_cases", is_huge=True)          # Statistical Risk
-create_session("edge_cases", is_missing_fields=True)# Structural Error
-create_session("edge_cases", is_invalid_json=True)  # Structural Error
-create_session("edge_cases", is_corrupted=True)     # structural Error (empty)
+# Edge Cases via script
+print("Injecting statistical anomalies...")
+create_bulk_session("anomalies", is_huge=True)
 
-# Setup .project_root for the fixed static project
-with open(os.path.join(gemini_tmp, "static_proj", ".project_root"), "w") as f:
-    f.write(os.path.abspath("."))
+# 5. Create Metadata
+# Valid project roots
+for proj in BULK_PROJECTS + ["standard_sessions", "multilingual", "edge_cases"]:
+    with open(os.path.join(gemini_tmp, proj, ".project_root"), "w") as f:
+        f.write(f"/home/omega/Projects/{proj}")
 
-print(f"Deep-validation dataset ready in '{base_dir}/'.")
+# Orphaned project root (WARN state)
+os.makedirs(os.path.join(gemini_tmp, "orphaned_proj"), exist_ok=True)
+with open(os.path.join(gemini_tmp, "orphaned_proj", ".project_root"), "w") as f:
+    f.write("/non/existent/path/on/system")
+
+print("Refreshing test data complete.")
