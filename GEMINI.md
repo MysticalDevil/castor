@@ -15,13 +15,19 @@ Castor is a local session manager for the Gemini CLI, written in Rust. It provid
 - Rust Toolchain (1.85+ for 2024 edition support)
 - Python 3 (optional, for generating test data)
 
-### Key Commands
+### Key Commands (using `just`)
+- **List Tasks**: `just`
+- **Build**: `just build`
+- **Run TUI (Real)**: `just tui`
+- **Run TUI (Test Data)**: `just test-tui`
+- **List Sessions**: `just list`
+- **Test**: `just test`
+- **Coverage**: `just coverage`
+- **Lint/Check**: `just check`
+
+### Cargo Fallbacks
 - **Build**: `cargo build`
-- **Run CLI**: `cargo run -- <COMMAND>` (e.g., `cargo run -- list`)
-- **Run TUI**: `cargo run -- tui`
-- **Test**: `cargo test`
-- **Coverage**: `cargo tarpaulin --ignore-tests`
-- **Check Health**: `cargo run -- doctor`
+...
 
 ### CLI Usage Examples
 - `castor list --group`: List sessions grouped by host project.
