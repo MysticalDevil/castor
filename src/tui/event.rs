@@ -1,8 +1,9 @@
+use crate::ops::Executor;
+use crate::tui::app::{App, InputMode};
 use crossterm::event::{self, Event, KeyCode};
 use std::time::Duration;
-use crate::tui::app::{App, InputMode};
-use crate::ops::Executor;
 
+#[allow(clippy::collapsible_if)]
 pub fn handle_events(app: &mut App, executor: &Executor) -> crate::error::Result<()> {
     if event::poll(Duration::from_millis(100))? {
         if let Event::Key(key) = event::read()? {
@@ -32,7 +33,7 @@ pub fn handle_events(app: &mut App, executor: &Executor) -> crate::error::Result
                         app.input_mode = InputMode::Normal;
                     }
                     _ => {}
-                }
+                },
             }
         }
     }

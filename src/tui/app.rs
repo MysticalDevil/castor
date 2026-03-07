@@ -46,7 +46,10 @@ impl App {
 
         for s in self.registry.list() {
             let proj_id = s.project_id.clone();
-            self.sessions_by_project.entry(proj_id.clone()).or_insert_with(Vec::new).push(s.clone());
+            self.sessions_by_project
+                .entry(proj_id.clone())
+                .or_default()
+                .push(s.clone());
         }
 
         self.projects = self.sessions_by_project.keys().cloned().collect();
@@ -96,31 +99,35 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
     use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn test_app_tree_navigation() {
         let tmp = tempdir().unwrap();
         let project_path = tmp.path().join("proj1/chats");
         fs::create_dir_all(&project_path).unwrap();
-        fs::write(project_path.join("session-2026-03-08T12-00-aaaa1111.json"), "{}").unwrap();
+        fs::write(
+            project_path.join("session-2026-03-08T12-00-aaaa1111.json"),
+            "{}",
+        )
+        .unwrap();
 
         let mut registry = Registry::new(tmp.path());
         registry.reload().unwrap();
-        
+
         let mut app = App::new(registry);
         app.reload().unwrap();
-        
+
         // Items should be: [Project("proj1"), Session("session-...-aaaa1111.json")]
         assert_eq!(app.flat_items.len(), 2);
         assert!(matches!(app.flat_items[0], Selection::Project(_)));
         assert!(matches!(app.flat_items[1], Selection::Session(_)));
-        
+
         assert_eq!(app.selected_index, 0);
         app.next();
         assert_eq!(app.selected_index, 1);
-        
+
         let sel = app.get_selected_session().unwrap();
         assert!(sel.id.contains("aaaa1111"));
     }
