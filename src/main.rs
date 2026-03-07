@@ -4,9 +4,11 @@ use castor::core::Registry;
 use castor::error::Result;
 use castor::ops::Executor;
 use castor::utils::term::format_cell_raw;
-use clap::Parser;
+use clap::{Parser, CommandFactory};
+use clap_complete::generate;
 use colored::Colorize;
 use std::collections::HashMap;
+use std::io;
 use chrono::{Utc, Duration};
 
 /// Formats a cell with fixed visual width and optional styling for the CLI.
@@ -154,6 +156,104 @@ fn main() -> Result<()> {
                 }
             }
         }
+        Some(Commands::Grep { pattern, ignore_case }) => {
+            registry.reload()?;
+            let sessions = registry.list();
+            let mut matches = Vec::new();
+            let pattern_lower = pattern.to_lowercase();
+
+            for s in sessions {
+                let content = std::fs::read_to_string(&s.path)?;
+                let is_match = if ignore_case {
+                    content.to_lowercase().contains(&pattern_lower)
+                } else {
+                    content.contains(&pattern)
+                };
+
+                if is_match {
+                    matches.push(s);
+                }
+            }
+
+            if matches.is_empty() {
+                println!("No sessions found containing '{}'", pattern);
+            } else {
+                println!("Found {} sessions containing '{}':", matches.len(), pattern);
+                print_list_header();
+                for s in matches {
+                    print_session(s, home_dir.as_deref());
+                }
+            }
+        }
+        Some(Commands::Export { id, output }) => {
+            registry.reload()?;
+            let session = registry.find(&id).ok_or_else(|| {
+                castor::error::CastorError::PathNotFound(std::path::PathBuf::from(id.clone()))
+            })?;
+
+            let content = std::fs::read_to_string(&session.path)?;
+            let json: serde_json::Value = serde_json::from_str(&content)?;
+            let mut markdown = format!("# Session: {}\n\n", session.id);
+
+            if let Some(messages) = json.get("messages").and_then(|m| m.as_array()) {
+                for msg in messages {
+                    let role = msg.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
+                    markdown.push_str(&format!("## {}\n", role.to_uppercase()));
+                    
+                    let content_val = msg.get("content").unwrap_or(&serde_json::Value::Null);
+                    if let Some(text) = content_val.as_str() {
+                        markdown.push_str(&format!("{}\n\n", text));
+                    } else if let Some(arr) = content_val.as_array() {
+                        for item in arr {
+                            if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
+                                markdown.push_str(&format!("{}\n\n", text));
+                            }
+                        }
+                    }
+                }
+            }
+
+            let out_path = output.unwrap_or_else(|| {
+                let mut p = std::path::PathBuf::from(&session.id);
+                p.set_extension("md");
+                p
+            });
+
+            std::fs::write(&out_path, markdown)?;
+            println!("Session exported to {}", out_path.display().to_string().green());
+        }
+        Some(Commands::Stats) => {
+            registry.reload()?;
+            let sessions = registry.list();
+            let total_size: u64 = sessions.iter().map(|s| s.size).sum();
+            
+            println!("{}", "Castor Storage Statistics".cyan().bold());
+            println!("{:<20} {}", "Total Sessions:", sessions.len());
+            println!("{:<20} {:.2} MB", "Total Size:", total_size as f64 / 1024.0 / 1024.0);
+            
+            let mut trash_size = 0;
+            if executor.config.trash_path.exists() {
+                for entry in walkdir::WalkDir::new(&executor.config.trash_path) {
+                    if let Ok(e) = entry {
+                        if e.file_type().is_file() {
+                            trash_size += e.metadata().map(|m| m.len()).unwrap_or(0);
+                        }
+                    }
+                }
+            }
+            println!("{:<20} {:.2} MB", "Trash Size:", trash_size as f64 / 1024.0 / 1024.0);
+        }
+        Some(Commands::ClearTrash { confirm }) => {
+            if !confirm {
+                println!("{}", "Please provide --confirm to empty the trash.".yellow());
+                return Ok(());
+            }
+            if executor.config.trash_path.exists() {
+                std::fs::remove_dir_all(&executor.config.trash_path)?;
+                std::fs::create_dir_all(&executor.config.trash_path)?;
+                println!("{}", "Trash cleared successfully.".green());
+            }
+        }
         Some(Commands::Prune { days, hard, dry_run, confirm }) => {
             registry.reload()?;
             let sessions = registry.list();
@@ -240,6 +340,11 @@ fn main() -> Result<()> {
             }
             registry.reload()?;
             println!("{} Detected sessions: {}", "✓".green(), registry.list().len());
+        }
+        Some(Commands::Completions { shell }) => {
+            let mut cmd = Cli::command();
+            let name = cmd.get_name().to_string();
+            generate(shell, &mut cmd, name, &mut io::stdout());
         }
         None => {
             println!("Use --help for available commands");
