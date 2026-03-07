@@ -13,7 +13,6 @@ impl Scanner {
         }
     }
 
-    /// Scans the base directory recursively for sessions.
     pub fn scan(&self) -> Result<Vec<Session>> {
         let mut sessions = Vec::new();
 
@@ -21,7 +20,6 @@ impl Scanner {
             return Ok(sessions);
         }
 
-        // Iterate through project directories in ~/.gemini/tmp/
         for entry in std::fs::read_dir(&self.base_path)? {
             let entry = entry?;
             let project_path = entry.path();
@@ -31,7 +29,6 @@ impl Scanner {
                     .unwrap_or("unknown")
                     .to_string();
 
-                // Check for .project_root file
                 let project_root_file = project_path.join(".project_root");
                 let host_path = if project_root_file.exists() {
                     std::fs::read_to_string(project_root_file)
@@ -48,7 +45,6 @@ impl Scanner {
             }
         }
 
-        // Sort by update time descending
         sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
         Ok(sessions)
@@ -69,5 +65,39 @@ impl Scanner {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_scanner_empty() {
+        let tmp = tempdir().unwrap();
+        let scanner = Scanner::new(tmp.path());
+        let results = scanner.scan().unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_scanner_with_data() {
+        let tmp = tempdir().unwrap();
+        let project_id = "test-proj";
+        let project_path = tmp.path().join(project_id);
+        let chats_path = project_path.join("chats");
+        fs::create_dir_all(&chats_path).unwrap();
+
+        fs::write(project_path.join(".project_root"), "/home/user/code").unwrap();
+        fs::write(chats_path.join("s1.json"), r#"{"messages": []}"#).unwrap();
+
+        let scanner = Scanner::new(tmp.path());
+        let results = scanner.scan().unwrap();
+        
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].project_id, project_id);
+        assert_eq!(results[0].host_path.as_ref().unwrap().to_str().unwrap(), "/home/user/code");
     }
 }

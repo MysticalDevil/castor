@@ -5,28 +5,13 @@ use crate::error::{Result, CastorError};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Session {
-    /// Unique identifier for the session (filename with extension).
     pub id: String,
-
-    /// The project hash/ID this session belongs to (directory name in tmp).
     pub project_id: String,
-
-    /// The actual host project path (from .project_root if available).
     pub host_path: Option<PathBuf>,
-
-    /// Human-readable name (extracted from the first user message).
     pub name: Option<String>,
-
-    /// Full path to the session file or directory.
     pub path: PathBuf,
-
-    /// Creation time.
     pub created_at: DateTime<Utc>,
-
-    /// Last update time.
     pub updated_at: DateTime<Utc>,
-
-    /// Size in bytes.
     pub size: u64,
 }
 
@@ -43,7 +28,6 @@ struct GeminiMessage {
 }
 
 impl Session {
-    /// Parses a session from its path, project ID, and host path.
     pub fn from_path(path: &Path, project_id: String, host_path: Option<PathBuf>) -> Result<Self> {
         let id = path.file_name()
             .and_then(|n| n.to_str())
@@ -114,5 +98,44 @@ impl Session {
             }
         }
         Ok(total_size)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_extract_name_simple() {
+        let tmp = tempdir().unwrap();
+        let file_path = tmp.path().join("session.json");
+        let data = r#"{"messages": [{"type": "user", "content": "Hello world"}]}"#;
+        fs::write(&file_path, data).unwrap();
+
+        let name = Session::extract_name(&file_path);
+        assert_eq!(name, Some("Hello world".to_string()));
+    }
+
+    #[test]
+    fn test_extract_name_complex() {
+        let tmp = tempdir().unwrap();
+        let file_path = tmp.path().join("session.json");
+        let data = r#"{"messages": [{"type": "user", "content": [{"text": "Multi\nline\ntext"}]}]}"#;
+        fs::write(&file_path, data).unwrap();
+
+        let name = Session::extract_name(&file_path);
+        assert_eq!(name, Some("Multi line text".to_string()));
+    }
+
+    #[test]
+    fn test_extract_name_none() {
+        let tmp = tempdir().unwrap();
+        let file_path = tmp.path().join("empty.json");
+        fs::write(&file_path, r#"{"messages": []}"#).unwrap();
+
+        let name = Session::extract_name(&file_path);
+        assert_eq!(name, None);
     }
 }
