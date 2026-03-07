@@ -24,9 +24,13 @@ doctor:
 test:
     cargo test
 
-# Run tests and generate coverage report (requires cargo-tarpaulin)
+# Run tests and generate coverage report
 coverage:
     cargo tarpaulin --ignore-tests --output-dir . --out Lcov
+
+# CI Gate: Verify that coverage meets the minimum threshold (40%)
+check-coverage:
+    cargo tarpaulin --ignore-tests --fail-under 40
 
 # Run the rich data generator script (requires python3)
 gen-test-data:
@@ -40,10 +44,12 @@ test-list: gen-test-data
 test-tui: gen-test-data
     cargo run -- --config test_config.json tui
 
-# Check code formatting and linting
+# Main Quality Gate: Formatting -> Linting -> Tests -> Coverage
 check:
     cargo fmt --all -- --check
     cargo clippy -- -D warnings
+    just test
+    just check-coverage
 
 # Format the code
 fmt:
