@@ -24,6 +24,7 @@ fn format_cell(text: &str, width: usize, is_header: bool, health: Option<&Sessio
             SessionHealth::Ok => truncated.green(),
             SessionHealth::Warn => truncated.yellow(),
             SessionHealth::Error => truncated.red().bold(),
+            SessionHealth::Risk => truncated.magenta().bold(),
         };
         format!("{}{}", colored, padding)
     } else {
@@ -366,12 +367,14 @@ fn main() -> Result<()> {
             let total = sessions.len();
             let mut orphaned = 0;
             let mut errors = 0;
+            let mut risks = 0;
             let mut no_root_file = 0;
 
             for s in sessions {
                 match s.check_health() {
                     SessionHealth::Warn => orphaned += 1,
                     SessionHealth::Error => errors += 1,
+                    SessionHealth::Risk => risks += 1,
                     SessionHealth::Ok => {},
                 }
                 if s.host_path.is_none() {
@@ -392,6 +395,11 @@ fn main() -> Result<()> {
             if errors > 0 {
                 println!("{:<25} {}", "Corrupted Sessions:", errors.to_string().red().bold());
                 println!("   (Session files missing or unreadable)");
+            }
+
+            if risks > 0 {
+                println!("{:<25} {}", "Untrusted Sessions:", risks.to_string().magenta().bold());
+                println!("   (Invalid ID pattern - potential tampering)");
             }
 
             if no_root_file > 0 {

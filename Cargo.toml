@@ -9,6 +9,7 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = "4.5"
 colored = "2.1"
 unicode-width = "0.1"
+regex = "1.10"
 
 # TUI
 ratatui = "0.26"

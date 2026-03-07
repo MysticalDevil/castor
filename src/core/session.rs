@@ -2,12 +2,20 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
 use crate::error::{Result, CastorError};
+use regex::Regex;
+use std::sync::LazyLock;
+
+static SESSION_ID_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    // Standard Gemini pattern: session-YYYY-MM-DDTHH-MM-hash.json
+    Regex::new(r"^session-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-[a-f0-9]{8}\.json$").unwrap()
+});
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum SessionHealth {
     Ok,
     Warn,
     Error,
+    Risk, // Potential injection or tampering (invalid ID pattern)
 }
 
 impl std::fmt::Display for SessionHealth {
@@ -16,6 +24,7 @@ impl std::fmt::Display for SessionHealth {
             SessionHealth::Ok => write!(f, "OK"),
             SessionHealth::Warn => write!(f, "WARN"),
             SessionHealth::Error => write!(f, "ERROR"),
+            SessionHealth::Risk => write!(f, "RISK"),
         }
     }
 }
@@ -82,12 +91,17 @@ impl Session {
             return SessionHealth::Error;
         }
 
-        // 2. Check if file is empty (usually means corrupted or interrupted)
+        // 2. Check if file is empty
         if self.size == 0 {
             return SessionHealth::Error;
         }
 
-        // 3. Check if host exists (if known)
+        // 3. Security Check: Validate ID pattern
+        if !SESSION_ID_REGEX.is_match(&self.id) {
+            return SessionHealth::Risk;
+        }
+
+        // 4. Check if host exists (if known)
         if let Some(host) = &self.host_path {
             if !host.exists() {
                 return SessionHealth::Warn;
@@ -160,17 +174,23 @@ mod tests {
     #[test]
     fn test_session_health() {
         let tmp = tempdir().unwrap();
-        let file_path = tmp.path().join("s.json");
-        fs::write(&file_path, "{}").unwrap();
+        let valid_id = "session-2026-03-08T12-00-abcdef12.json";
+        let file_path = tmp.path().join(valid_id);
+        fs::write(&file_path, "{\"messages\":[]}").unwrap();
 
         let mut session = Session::from_path(&file_path, "p".into(), None).unwrap();
         assert_eq!(session.check_health(), SessionHealth::Ok);
 
-        // Host not found
+        // Invalid ID pattern (Risk)
+        session.id = "hacked.json".to_string();
+        assert_eq!(session.check_health(), SessionHealth::Risk);
+
+        // Host not found (Warn) - restoring valid ID first
+        session.id = valid_id.to_string();
         session.host_path = Some(PathBuf::from("/non/existent/path"));
         assert_eq!(session.check_health(), SessionHealth::Warn);
 
-        // Session file missing
+        // Session file missing (Error)
         fs::remove_file(&file_path).unwrap();
         assert_eq!(session.check_health(), SessionHealth::Error);
     }
