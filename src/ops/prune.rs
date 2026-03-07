@@ -1,9 +1,10 @@
 use crate::core::Session;
-use chrono::{Utc, Duration};
+use chrono::{Duration, Utc};
 
 pub fn find_sessions_to_prune(sessions: &[Session], days: u64) -> Vec<Session> {
     let threshold = Utc::now() - Duration::days(days as i64);
-    sessions.iter()
+    sessions
+        .iter()
         .filter(|s| s.updated_at < threshold)
         .cloned()
         .collect()
@@ -26,6 +27,7 @@ mod tests {
             created_at: now,
             updated_at: now,
             size: 0,
+            validation_notes: Vec::new(),
         };
         let s2 = Session {
             id: "old".into(),
@@ -36,6 +38,7 @@ mod tests {
             created_at: now - Duration::days(40),
             updated_at: now - Duration::days(40),
             size: 0,
+            validation_notes: Vec::new(),
         };
 
         let to_prune = find_sessions_to_prune(&[s1, s2], 30);

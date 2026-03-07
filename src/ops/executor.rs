@@ -1,9 +1,9 @@
-use uuid::Uuid;
-use chrono::Utc;
-use crate::error::{Result, CastorError};
+use crate::audit::{AuditEntry, AuditLogger, OperationType};
 use crate::config::Config;
-use crate::audit::{AuditLogger, AuditEntry, OperationType};
 use crate::core::Session;
+use crate::error::{CastorError, Result};
+use chrono::Utc;
+use uuid::Uuid;
 
 pub struct Executor {
     pub config: Config,
@@ -20,7 +20,11 @@ impl Executor {
     pub fn delete_soft(&self, session: &Session, dry_run: bool) -> Result<Uuid> {
         let batch_id = Uuid::new_v4();
         // Include project_id in trash path to avoid collisions
-        let target_path = self.config.trash_path.join(&session.project_id).join(&session.id);
+        let target_path = self
+            .config
+            .trash_path
+            .join(&session.project_id)
+            .join(&session.id);
 
         let entry = AuditEntry {
             batch_id,
@@ -32,7 +36,10 @@ impl Executor {
         };
 
         if dry_run {
-            println!("[DRY-RUN] Would move session {} (Project: {}) to trash", session.id, session.project_id);
+            println!(
+                "[DRY-RUN] Would move session {} (Project: {}) to trash",
+                session.id, session.project_id
+            );
             return Ok(batch_id);
         }
 
@@ -70,7 +77,10 @@ impl Executor {
         };
 
         if dry_run {
-            println!("[DRY-RUN] Would permanently delete session {} (Project: {})", session.id, session.project_id);
+            println!(
+                "[DRY-RUN] Would permanently delete session {} (Project: {})",
+                session.id, session.project_id
+            );
             return Ok(batch_id);
         }
 
@@ -92,14 +102,16 @@ impl Executor {
     /// Restores a session from the trash.
     pub fn restore(&self, id: &str, dry_run: bool) -> Result<Uuid> {
         let batch_id = Uuid::new_v4();
-        
+
         let history = self.logger.load_history()?;
-        let latest_entry = history.iter()
-            .filter(|e| e.session_id == id && matches!(e.op_type, OperationType::SoftDelete))
-            .last()
+        let latest_entry = history
+            .iter()
+            .rfind(|e| e.session_id == id && matches!(e.op_type, OperationType::SoftDelete))
             .ok_or_else(|| CastorError::BatchNotFound(id.to_string()))?;
 
-        let trash_path = latest_entry.target_path.as_ref()
+        let trash_path = latest_entry
+            .target_path
+            .as_ref()
             .ok_or_else(|| CastorError::Audit("Missing target path in audit log".into()))?;
 
         if !trash_path.exists() {
@@ -116,7 +128,10 @@ impl Executor {
         };
 
         if dry_run {
-            println!("[DRY-RUN] Would restore session {} to {:?}", id, latest_entry.original_path);
+            println!(
+                "[DRY-RUN] Would restore session {} to {:?}",
+                id, latest_entry.original_path
+            );
             return Ok(batch_id);
         }
 

@@ -1,11 +1,11 @@
 use castor::cli::{Cli, Commands};
 use castor::config::Config;
 use castor::core::Registry;
+use castor::core::session::SessionHealth;
 use castor::error::Result;
 use castor::ops::{Executor, export, prune, stats::StorageStats};
 use castor::utils::term::{write_list_header, write_session_row};
-use castor::core::session::SessionHealth;
-use clap::{Parser, CommandFactory};
+use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use colored::Colorize;
 use std::collections::HashMap;
@@ -26,10 +26,14 @@ fn main() -> Result<()> {
         Some(Commands::Tui) => {
             castor::tui::run(registry, executor)?;
         }
-        Some(Commands::List { json, group, page_size }) => {
+        Some(Commands::List {
+            json,
+            group,
+            page_size,
+        }) => {
             registry.reload()?;
             let sessions = registry.list();
-            
+
             if json {
                 println!("{}", serde_json::to_string_pretty(sessions)?);
             } else if group {
@@ -82,7 +86,10 @@ fn main() -> Result<()> {
                 println!("{}", export::session_to_markdown(session)?);
             }
         }
-        Some(Commands::Grep { pattern, ignore_case }) => {
+        Some(Commands::Grep {
+            pattern,
+            ignore_case,
+        }) => {
             registry.reload()?;
             let sessions = registry.list();
             let mut matches = Vec::new();
@@ -123,15 +130,26 @@ fn main() -> Result<()> {
         Some(Commands::Stats) => {
             registry.reload()?;
             let s = StorageStats::calculate(registry.list(), &executor.config);
-            
+
             println!("{}", "Castor Storage Statistics".cyan().bold());
             println!("{:<20} {}", "Total Sessions:", s.total_sessions);
-            println!("{:<20} {:.2} MB", "Total Size:", s.total_size_bytes as f64 / 1024.0 / 1024.0);
-            println!("{:<20} {:.2} MB", "Trash Size:", s.trash_size_bytes as f64 / 1024.0 / 1024.0);
+            println!(
+                "{:<20} {:.2} MB",
+                "Total Size:",
+                s.total_size_bytes as f64 / 1024.0 / 1024.0
+            );
+            println!(
+                "{:<20} {:.2} MB",
+                "Trash Size:",
+                s.trash_size_bytes as f64 / 1024.0 / 1024.0
+            );
         }
         Some(Commands::ClearTrash { confirm }) => {
             if !confirm {
-                println!("{}", "Please provide --confirm to empty the trash.".yellow());
+                println!(
+                    "{}",
+                    "Please provide --confirm to empty the trash.".yellow()
+                );
                 return Ok(());
             }
             if executor.config.trash_path.exists() {
@@ -140,7 +158,12 @@ fn main() -> Result<()> {
                 println!("{}", "Trash cleared successfully.".green());
             }
         }
-        Some(Commands::Prune { days, hard, dry_run, confirm }) => {
+        Some(Commands::Prune {
+            days,
+            hard,
+            dry_run,
+            confirm,
+        }) => {
             registry.reload()?;
             let to_prune = prune::find_sessions_to_prune(registry.list(), days);
 
@@ -171,7 +194,12 @@ fn main() -> Result<()> {
                 println!("{}", "Pruning complete.".green());
             }
         }
-        Some(Commands::Delete { id, hard, dry_run, confirm }) => {
+        Some(Commands::Delete {
+            id,
+            hard,
+            dry_run,
+            confirm,
+        }) => {
             registry.reload()?;
             let session = registry.find(&id).ok_or_else(|| {
                 castor::error::CastorError::PathNotFound(std::path::PathBuf::from(id.clone()))
@@ -207,27 +235,52 @@ fn main() -> Result<()> {
             }
         }
         Some(Commands::Doctor) => {
-            println!("{}", "Castor Doctor - Environment Diagnostics".cyan().bold());
-            let home = std::env::var("HOME").map(std::path::PathBuf::from).unwrap_or_default();
-            
+            println!(
+                "{}",
+                "Castor Doctor - Environment Diagnostics".cyan().bold()
+            );
+            let home = std::env::var("HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_default();
+
             // 1. Basic Directory Checks
             let gemini_base = home.join(".gemini");
             if gemini_base.exists() {
                 println!("{} Gemini base directory: {:?}", "✓".green(), gemini_base);
             } else {
-                println!("{} Gemini base directory NOT FOUND at {:?}", "✗".red(), gemini_base);
+                println!(
+                    "{} Gemini base directory NOT FOUND at {:?}",
+                    "✗".red(),
+                    gemini_base
+                );
             }
 
             if executor.config.gemini_sessions_path.exists() {
-                println!("{} Sessions path: {:?}", "✓".green(), executor.config.gemini_sessions_path);
+                println!(
+                    "{} Sessions path: {:?}",
+                    "✓".green(),
+                    executor.config.gemini_sessions_path
+                );
             } else {
-                println!("{} Sessions path NOT FOUND: {:?}", "✗".red(), executor.config.gemini_sessions_path);
+                println!(
+                    "{} Sessions path NOT FOUND: {:?}",
+                    "✗".red(),
+                    executor.config.gemini_sessions_path
+                );
             }
 
             if executor.config.trash_path.exists() {
-                println!("{} Trash directory: {:?}", "✓".green(), executor.config.trash_path);
+                println!(
+                    "{} Trash directory: {:?}",
+                    "✓".green(),
+                    executor.config.trash_path
+                );
             } else {
-                println!("{} Trash directory NOT FOUND: {:?}", "✗".red(), executor.config.trash_path);
+                println!(
+                    "{} Trash directory NOT FOUND: {:?}",
+                    "✗".red(),
+                    executor.config.trash_path
+                );
             }
 
             // 2. Integrity Detection
@@ -244,7 +297,7 @@ fn main() -> Result<()> {
                     SessionHealth::Warn => orphaned += 1,
                     SessionHealth::Error => errors += 1,
                     SessionHealth::Risk => risks += 1,
-                    SessionHealth::Ok => {},
+                    SessionHealth::Ok => {}
                 }
                 if s.host_path.is_none() {
                     no_root_file += 1;
@@ -253,27 +306,46 @@ fn main() -> Result<()> {
 
             println!("\n{}", "Session Integrity:".yellow().bold());
             println!("{:<25} {}", "Total Sessions:", total);
-            
+
             if orphaned > 0 {
-                println!("{:<25} {}", "Orphaned Sessions:", orphaned.to_string().red().bold());
+                println!(
+                    "{:<25} {}",
+                    "Orphaned Sessions:",
+                    orphaned.to_string().red().bold()
+                );
             } else {
                 println!("{:<25} {}", "Orphaned Sessions:", "0".green());
             }
 
             if errors > 0 {
-                println!("{:<25} {}", "Corrupted Sessions:", errors.to_string().red().bold());
+                println!(
+                    "{:<25} {}",
+                    "Corrupted Sessions:",
+                    errors.to_string().red().bold()
+                );
             }
 
             if risks > 0 {
-                println!("{:<25} {}", "Untrusted Sessions:", risks.to_string().magenta().bold());
+                println!(
+                    "{:<25} {}",
+                    "Untrusted Sessions:",
+                    risks.to_string().magenta().bold()
+                );
             }
 
             if no_root_file > 0 {
-                println!("{:<25} {}", "Untracked Hosts:", no_root_file.to_string().yellow());
+                println!(
+                    "{:<25} {}",
+                    "Untracked Hosts:",
+                    no_root_file.to_string().yellow()
+                );
             }
 
             if orphaned > 0 || errors > 0 || risks > 0 {
-                println!("\n{} Hint: Use `castor list` to find unhealthy sessions or `prune` to clean up.", "ℹ".blue());
+                println!(
+                    "\n{} Hint: Use `castor list` to find unhealthy sessions or `prune` to clean up.",
+                    "ℹ".blue()
+                );
             }
         }
         Some(Commands::Completions { shell }) => {
