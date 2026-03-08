@@ -12,10 +12,11 @@ pub fn session_to_markdown_limited(session: &Session, limit: usize) -> Result<St
     let file = std::fs::File::open(&session.path)?;
     let mut reader = BufReader::new(file);
 
-    // If it's a preview, we only care about the beginning of the file.
-    // 128KB is usually more than enough for the first 20 messages.
-    let content = if limit < 100 {
-        let mut buffer = vec![0; 128 * 1024];
+    // 1MB is a good balance for background parsing while staying responsive.
+    let preview_threshold = 1024 * 1024;
+
+    let content = if limit < 100 && session.size > preview_threshold {
+        let mut buffer = vec![0; preview_threshold as usize];
         let n = reader.read(&mut buffer)?;
         buffer.truncate(n);
         String::from_utf8_lossy(&buffer).into_owned()
@@ -25,12 +26,19 @@ pub fn session_to_markdown_limited(session: &Session, limit: usize) -> Result<St
         s
     };
 
-    // Attempt to parse. If it's truncated, we try a best-effort fix.
+    // Attempt to parse.
     let json_val: serde_json::Value = if content.ends_with('}') {
         serde_json::from_str(&content).unwrap_or(serde_json::Value::Null)
     } else {
-        // Try to close the JSON manually for partial parsing
-        let fixed = format!("{}]}}", content.trim_end_matches(|c| c != ']'));
+        // Best-effort partial JSON fix for truncated data
+        let mut fixed = content.clone();
+        if !fixed.ends_with(']') {
+            fixed.push_str("]}");
+        }
+        if !fixed.ends_with('}') {
+            fixed.push('}');
+        }
+        // Try parsing the fixed version, fallback to Null if still broken
         serde_json::from_str(&fixed).unwrap_or(serde_json::Value::Null)
     };
 
@@ -85,10 +93,12 @@ pub fn session_to_markdown_limited(session: &Session, limit: usize) -> Result<St
                 }
             }
         }
-    } else if content.len() >= 128 * 1024 {
-        markdown.push_str("-- [ Large file: content too deep to preview efficiently ] --");
+    } else if session.size > preview_threshold {
+        // If we failed to parse even with 1MB, something is weird or the header is too deep.
+        markdown.push_str("-- [ Large file: content header is too deep for quick preview ] --\n");
+        markdown.push_str("-- [ Use `castor cat` in CLI to view full content ] --");
     } else {
-        markdown.push_str("-- [ Error parsing session content ] --");
+        markdown.push_str("-- [ Error: Session content is unreadable or malformed ] --");
     }
 
     Ok(markdown)
