@@ -10,6 +10,7 @@ pub fn handle_key_event(
             KeyCode::Char('q') => app.should_quit = true,
             KeyCode::Char('j') | KeyCode::Down => app.next(),
             KeyCode::Char('k') | KeyCode::Up => app.previous(),
+            KeyCode::Char('g') => app.toggle_grouping()?,
             KeyCode::Char('r') => {
                 // Background reload logic would go here or just triggered via msg
                 app.message = Some("Reloading...".to_string());

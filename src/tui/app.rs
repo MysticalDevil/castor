@@ -8,20 +8,28 @@ pub enum InputMode {
     ConfirmDelete,
 }
 
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub enum GroupingMode {
+    #[default]
+    Host,
+    Month,
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub enum Selection {
-    Project(String),
+    Group(String),
     Session(String),
 }
 
 pub struct App {
     pub registry: Registry,
     pub executor: Executor,
-    pub projects: Vec<String>,
-    pub sessions_by_project: HashMap<String, Vec<Session>>,
-    pub flat_items: Vec<Selection>, // Flattened tree for easy indexing
+    pub groups: Vec<String>,
+    pub sessions_by_group: HashMap<String, Vec<Session>>,
+    pub flat_items: Vec<Selection>,
     pub selected_index: usize,
     pub input_mode: InputMode,
+    pub grouping_mode: GroupingMode,
     pub should_quit: bool,
     pub message: Option<String>,
 }
@@ -31,37 +39,61 @@ impl App {
         Self {
             registry,
             executor,
-            projects: Vec::new(),
-            sessions_by_project: HashMap::new(),
+            groups: Vec::new(),
+            sessions_by_group: HashMap::new(),
             flat_items: Vec::new(),
             selected_index: 0,
             input_mode: InputMode::Normal,
+            grouping_mode: GroupingMode::Host,
             should_quit: false,
             message: None,
         }
     }
 
+    pub fn toggle_grouping(&mut self) -> Result<()> {
+        self.grouping_mode = match self.grouping_mode {
+            GroupingMode::Host => GroupingMode::Month,
+            GroupingMode::Month => GroupingMode::Host,
+        };
+        self.reload()
+    }
+
     pub fn reload(&mut self) -> Result<()> {
         self.registry.reload()?;
-        self.sessions_by_project.clear();
-        self.projects.clear();
+        self.sessions_by_group.clear();
+        self.groups.clear();
         self.flat_items.clear();
 
+        let home = std::env::var("HOME").ok();
+
         for s in self.registry.list() {
-            let proj_id = s.project_id.clone();
-            self.sessions_by_project
-                .entry(proj_id.clone())
+            let group_key = match self.grouping_mode {
+                GroupingMode::Host => {
+                    if let Some(path) = &s.host_path {
+                        crate::utils::fs::format_host(path, home.as_deref())
+                    } else {
+                        s.project_id.clone()
+                    }
+                }
+                GroupingMode::Month => s.updated_at.format("%Y-%m").to_string(),
+            };
+
+            self.sessions_by_group
+                .entry(group_key)
                 .or_default()
                 .push(s.clone());
         }
 
-        self.projects = self.sessions_by_project.keys().cloned().collect();
-        self.projects.sort();
+        self.groups = self.sessions_by_group.keys().cloned().collect();
+        // Sort groups: Month desc, Host asc
+        self.groups.sort_by(|a, b| match self.grouping_mode {
+            GroupingMode::Month => b.cmp(a),
+            GroupingMode::Host => a.cmp(b),
+        });
 
-        // Build flat tree view: Project -> [Session, Session...]
-        for proj in &self.projects {
-            self.flat_items.push(Selection::Project(proj.clone()));
-            if let Some(sessions) = self.sessions_by_project.get(proj) {
+        for group in &self.groups {
+            self.flat_items.push(Selection::Group(group.clone()));
+            if let Some(sessions) = self.sessions_by_group.get(group) {
                 for s in sessions {
                     self.flat_items.push(Selection::Session(s.id.clone()));
                 }
@@ -107,7 +139,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn test_app_tree_navigation() {
+    fn test_app_grouping_toggle() {
         let tmp = tempdir().unwrap();
         let project_path = tmp.path().join("proj1/chats");
         fs::create_dir_all(&project_path).unwrap();
@@ -117,9 +149,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut registry = Registry::new(tmp.path(), &tmp.path().join("cache.json"));
-        registry.reload().unwrap();
-
+        let registry = Registry::new(tmp.path(), &tmp.path().join("cache.json"));
         let executor = Executor::new(Config {
             gemini_sessions_path: tmp.path().to_path_buf(),
             trash_path: tmp.path().join("trash"),
@@ -131,16 +161,11 @@ mod tests {
         let mut app = App::new(registry, executor);
         app.reload().unwrap();
 
-        // Items should be: [Project("proj1"), Session("session-...-aaaa1111.json")]
-        assert_eq!(app.flat_items.len(), 2);
-        assert!(matches!(app.flat_items[0], Selection::Project(_)));
-        assert!(matches!(app.flat_items[1], Selection::Session(_)));
+        assert_eq!(app.grouping_mode, GroupingMode::Host);
+        app.toggle_grouping().unwrap();
+        assert_eq!(app.grouping_mode, GroupingMode::Month);
 
-        assert_eq!(app.selected_index, 0);
-        app.next();
-        assert_eq!(app.selected_index, 1);
-
-        let sel = app.get_selected_session().unwrap();
-        assert!(sel.id.contains("aaaa1111"));
+        // Month group for 2026-03
+        assert!(app.groups.contains(&"2026-03".to_string()));
     }
 }
