@@ -129,7 +129,7 @@ pub enum Commands {
         id: String,
 
         /// Dry-run mode: show what would be restored
-        #[arg(long, default_value_t = false)]
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         dry_run: bool,
     },
 
@@ -149,4 +149,28 @@ pub enum Commands {
         #[arg(value_enum)]
         shell: Shell,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn test_restore_dry_run_default_true() {
+        let cli = Cli::parse_from(["castor", "restore", "abc123"]);
+        match cli.command {
+            Some(Commands::Restore { dry_run, .. }) => assert!(dry_run),
+            _ => panic!("expected restore command"),
+        }
+    }
+
+    #[test]
+    fn test_restore_dry_run_can_be_disabled() {
+        let cli = Cli::parse_from(["castor", "restore", "abc123", "--dry-run", "false"]);
+        match cli.command {
+            Some(Commands::Restore { dry_run, .. }) => assert!(!dry_run),
+            _ => panic!("expected restore command"),
+        }
+    }
 }

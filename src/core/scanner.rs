@@ -43,46 +43,47 @@ impl Scanner {
                     .map(|s| PathBuf::from(s.trim()));
 
                 let chats_path = project_path.join("chats");
-                if chats_path.exists() && chats_path.is_dir() {
-                    if let Ok(entries) = fs::read_dir(chats_path) {
-                        for chat_entry in entries.flatten() {
-                            let path = chat_entry.path();
-                            if path.extension().is_some_and(|ext| ext == "json") {
-                                if let Ok(metadata) = chat_entry.metadata() {
-                                    let updated_at = metadata
-                                        .modified()
-                                        .unwrap_or_else(|_| std::time::SystemTime::now())
-                                        .into();
+                if chats_path.exists()
+                    && chats_path.is_dir()
+                    && let Ok(entries) = fs::read_dir(chats_path)
+                {
+                    for chat_entry in entries.flatten() {
+                        let path = chat_entry.path();
+                        if path.extension().is_some_and(|ext| ext == "json")
+                            && let Ok(metadata) = chat_entry.metadata()
+                        {
+                            let updated_at = metadata
+                                .modified()
+                                .unwrap_or_else(|_| std::time::SystemTime::now())
+                                .into();
 
-                                    let id = path
-                                        .file_name()
-                                        .and_then(|n| n.to_str())
-                                        .unwrap_or("unknown")
-                                        .to_string();
+                            let id = path
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("unknown")
+                                .to_string();
 
-                                    let display_id = id
-                                        .strip_suffix(".json")
-                                        .unwrap_or(&id)
-                                        .split('-')
-                                        .next_back()
-                                        .unwrap_or(&id)
-                                        .to_string();
+                            let display_id = id
+                                .strip_suffix(".json")
+                                .unwrap_or(&id)
+                                .split('-')
+                                .next_back()
+                                .unwrap_or(&id)
+                                .to_string();
 
-                                    sessions.push(Session {
-                                        id,
-                                        display_id,
-                                        project_id: project_id.clone(),
-                                        host_path: host_path.clone(),
-                                        name: None,
-                                        path,
-                                        created_at: updated_at,
-                                        updated_at,
-                                        size: metadata.len(),
-                                        health: crate::core::session::SessionHealth::Unknown,
-                                        validation_notes: Vec::new(),
-                                    });
-                                }
-                            }
+                            sessions.push(Session {
+                                id,
+                                display_id,
+                                project_id: project_id.clone(),
+                                host_path: host_path.clone(),
+                                name: None,
+                                path,
+                                created_at: updated_at,
+                                updated_at,
+                                size: metadata.len(),
+                                health: crate::core::session::SessionHealth::Unknown,
+                                validation_notes: Vec::new(),
+                            });
                         }
                     }
                 }

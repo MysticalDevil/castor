@@ -28,17 +28,16 @@ pub fn session_to_markdown_limited(
 ) -> Result<String> {
     // Preferred path: structured JSON preview from the head messages.
     // This aligns with "preview first few segments" semantics.
-    if session.size <= preview.deep_preview_max_bytes {
-        if let Ok((mut head_markdown, count, truncated)) =
+    if session.size <= preview.deep_preview_max_bytes
+        && let Ok((mut head_markdown, count, truncated)) =
             build_markdown_from_json_file(session, limit, preview.deep_preview_char_budget / 2)
-            && count > 0
-        {
-            head_markdown.insert_str(0, "-- [ Preview from session head ] --\n\n");
-            if truncated {
-                head_markdown.push_str("\n\n-- [ Preview limited to first few messages ] --");
-            }
-            return Ok(head_markdown);
+        && count > 0
+    {
+        head_markdown.insert_str(0, "-- [ Preview from session head ] --\n\n");
+        if truncated {
+            head_markdown.push_str("\n\n-- [ Preview limited to first few messages ] --");
         }
+        return Ok(head_markdown);
     }
 
     let file = std::fs::File::open(&session.path)?;
@@ -98,10 +97,8 @@ pub fn session_to_markdown_deep_limited(
     }
 
     let (mut markdown, count, truncated) =
-        match build_markdown_from_json_file(session, limit, preview.deep_preview_char_budget) {
-            Ok(v) => v,
-            Err(_) => (String::new(), 0, false),
-        };
+        build_markdown_from_json_file(session, limit, preview.deep_preview_char_budget)
+            .unwrap_or_default();
     if count == 0 {
         return session_to_markdown_limited(session, limit, preview);
     }
@@ -154,7 +151,7 @@ impl PreviewBuildState {
 
         let clipped_text = if trimmed.chars().count() > available {
             let mut clipped = trimmed.chars().take(available).collect::<String>();
-            clipped.push_str("…");
+            clipped.push('…');
             self.truncated = true;
             clipped
         } else {

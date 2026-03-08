@@ -7,6 +7,22 @@ pub fn format_host(path: &Path, home: Option<&str>) -> String {
     {
         return path_str.replacen(h, "~", 1);
     }
+    if path.is_absolute() {
+        let parts: Vec<String> = path
+            .components()
+            .filter_map(|c| {
+                let s = c.as_os_str().to_string_lossy();
+                if s.is_empty() || s == "/" {
+                    None
+                } else {
+                    Some(s.to_string())
+                }
+            })
+            .collect();
+        if parts.len() >= 4 {
+            return format!("/{}/{}/../{}", parts[0], parts[1], parts[parts.len() - 1]);
+        }
+    }
     path_str.to_string()
 }
 
@@ -44,8 +60,8 @@ mod tests {
 
     #[test]
     fn test_format_host_long_path() {
-        let path = Path::new("/var/log/syslog");
-        assert_eq!(format_host(path, None), "/var/log/syslog");
+        let path = Path::new("/var/db/repos/mystical-devil");
+        assert_eq!(format_host(path, None), "/var/db/../mystical-devil");
     }
 
     #[test]

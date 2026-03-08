@@ -2,7 +2,7 @@
 
 `castor` is a secure, local session manager for the Gemini CLI, written in Rust. It provides a modern interface to inspect, manage, and clean up your local conversation history while prioritizing safety through a default dry-run policy and soft-delete mechanism.
 
-Current stable release: `v0.1.0`.
+Current stable release: `v0.1.1`.
 
 ## Features
 
@@ -23,14 +23,14 @@ Current stable release: `v0.1.0`.
 ### Install via Cargo
 
 ```bash
-cargo install --git https://github.com/MysticalDevil/castor.git --tag v0.1.0 castor
+cargo install --git https://github.com/MysticalDevil/castor.git --tag v0.1.1 castor
 castor --help
 ```
 
 If your environment is configured for SSH git access, you can also use:
 
 ```bash
-cargo install --git git@github.com:MysticalDevil/castor.git --tag v0.1.0 castor
+cargo install --git git@github.com:MysticalDevil/castor.git --tag v0.1.1 castor
 ```
 
 ### Install via mise
@@ -45,7 +45,7 @@ castor --help
 If you prefer installing directly from this Git repository, use mise for Rust toolchain management and cargo for the package:
 
 ```bash
-cargo install --git https://github.com/MysticalDevil/castor.git --tag v0.1.0 castor
+cargo install --git https://github.com/MysticalDevil/castor.git --tag v0.1.1 castor
 castor --help
 ```
 
@@ -122,7 +122,7 @@ The repository includes a GitHub Actions workflow at `.github/workflows/ci.yml` 
 
 ## Releases
 
-- The first stable tag is `v0.1.0`.
+- Latest stable tag is `v0.1.1`.
 
 ## License
 

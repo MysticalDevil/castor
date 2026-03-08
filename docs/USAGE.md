@@ -70,7 +70,13 @@ Castor uses soft-delete by default. Prefer dry-run first.
 ### Restore from trash
 
 ```bash
-./target/release/castor restore
+./target/release/castor restore <SESSION_ID>
+```
+
+`restore` defaults to dry-run. To perform actual restore:
+
+```bash
+./target/release/castor restore <SESSION_ID> --dry-run false
 ```
 
 ## TUI Workflows

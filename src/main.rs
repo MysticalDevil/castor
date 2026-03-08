@@ -9,15 +9,17 @@ mod utils;
 
 use crate::config::Config;
 use crate::core::Registry;
-use crate::error::Result;
+use crate::error::{CastorError, Result};
 use crate::ops::{
     doctor::DoctorReport, executor::Executor, export, grep, prune, stats::StorageStats,
 };
 use clap::{CommandFactory, Parser};
 use cli::{Cli, Commands};
+use std::path::PathBuf;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    init_logging(cli.verbose);
     let config = Config::load(cli.config.as_deref())?;
     config.ensure_dirs()?;
 
@@ -32,7 +34,7 @@ fn main() -> Result<()> {
             Commands::List {
                 group,
                 json,
-                page_size: _,
+                page_size,
             } => {
                 registry.reload()?;
                 let sessions = registry.list();
@@ -41,9 +43,17 @@ fn main() -> Result<()> {
                     let raw_sessions: Vec<_> = sessions.iter().map(|s| &**s).collect();
                     println!("{}", serde_json::to_string_pretty(&raw_sessions)?);
                 } else if group {
-                    utils::term::print_sessions_grouped(sessions, &executor.config);
+                    utils::term::print_sessions_grouped_paginated(
+                        sessions,
+                        &executor.config,
+                        page_size,
+                    );
                 } else {
-                    utils::term::print_sessions_table(sessions, &executor.config);
+                    utils::term::print_sessions_table_paginated(
+                        sessions,
+                        &executor.config,
+                        page_size,
+                    );
                 }
             }
             Commands::Cat { id, raw } => {
@@ -58,7 +68,7 @@ fn main() -> Result<()> {
                         );
                     }
                 } else {
-                    println!("Session {} not found.", id);
+                    return Err(CastorError::PathNotFound(PathBuf::from(id)));
                 }
             }
             Commands::Grep {
@@ -75,7 +85,7 @@ fn main() -> Result<()> {
                     let path = export::export_session(&session, output.as_deref())?;
                     println!("Exported session to {:?}", path);
                 } else {
-                    println!("Session {} not found.", id);
+                    return Err(CastorError::PathNotFound(PathBuf::from(id)));
                 }
             }
             Commands::Stats => {
@@ -152,7 +162,7 @@ fn main() -> Result<()> {
                         println!("Session {} deleted.", id);
                     }
                 } else {
-                    println!("Session {} not found.", id);
+                    return Err(CastorError::PathNotFound(PathBuf::from(id)));
                 }
             }
             Commands::Restore { id, dry_run } => {
@@ -214,4 +224,15 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn init_logging(verbose: bool) {
+    if !verbose {
+        return;
+    }
+
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_target(false)
+        .try_init();
 }
