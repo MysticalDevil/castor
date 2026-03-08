@@ -91,6 +91,7 @@ impl App {
         }
 
         self.groups = self.sessions_by_group.keys().cloned().collect();
+        // Sort groups: Month desc, Host asc
         self.groups.sort_by(|a, b| match self.grouping_mode {
             GroupingMode::Month => b.cmp(a),
             GroupingMode::Host => a.cmp(b),
@@ -105,6 +106,14 @@ impl App {
             }
         }
 
+        // Initialize selection to the first session if possible
+        if !self.flat_items.is_empty() {
+            self.selected_index = 0;
+            if matches!(self.flat_items[0], Selection::Group(_)) {
+                self.next();
+            }
+        }
+
         if self.selected_index >= self.flat_items.len() && !self.flat_items.is_empty() {
             self.selected_index = self.flat_items.len() - 1;
         }
@@ -114,21 +123,41 @@ impl App {
     }
 
     pub fn next(&mut self) {
-        if !self.flat_items.is_empty() {
-            self.selected_index = (self.selected_index + 1) % self.flat_items.len();
-            self.update_preview();
+        if self.flat_items.is_empty() {
+            return;
         }
+        let start = self.selected_index;
+        loop {
+            self.selected_index = (self.selected_index + 1) % self.flat_items.len();
+            if matches!(self.flat_items[self.selected_index], Selection::Session(_)) {
+                break;
+            }
+            if self.selected_index == start {
+                break; // Cycled through all, no session found
+            }
+        }
+        self.update_preview();
     }
 
     pub fn previous(&mut self) {
-        if !self.flat_items.is_empty() {
+        if self.flat_items.is_empty() {
+            return;
+        }
+        let start = self.selected_index;
+        loop {
             if self.selected_index == 0 {
                 self.selected_index = self.flat_items.len() - 1;
             } else {
                 self.selected_index -= 1;
             }
-            self.update_preview();
+            if matches!(self.flat_items[self.selected_index], Selection::Session(_)) {
+                break;
+            }
+            if self.selected_index == start {
+                break; // Cycled through all, no session found
+            }
         }
+        self.update_preview();
     }
 
     /// Updates the preview cache if the selection has changed
@@ -184,7 +213,9 @@ mod tests {
         )
         .unwrap();
 
-        let registry = Registry::new(tmp.path(), &tmp.path().join("cache.json"));
+        let mut registry = Registry::new(tmp.path(), &tmp.path().join("cache.json"));
+        registry.reload().unwrap();
+
         let executor = Executor::new(Config {
             gemini_sessions_path: tmp.path().to_path_buf(),
             trash_path: tmp.path().join("trash"),
@@ -200,5 +231,45 @@ mod tests {
         app.toggle_grouping().unwrap();
         assert_eq!(app.grouping_mode, GroupingMode::Month);
         assert!(app.groups.contains(&"2026-03".to_string()));
+    }
+
+    #[test]
+    fn test_app_skip_groups() {
+        let tmp = tempdir().unwrap();
+        let p1 = tmp.path().join("p1/chats");
+        let p2 = tmp.path().join("p2/chats");
+        fs::create_dir_all(&p1).unwrap();
+        fs::create_dir_all(&p2).unwrap();
+        fs::write(p1.join("session-2026-03-08T12-00-aaaa1111.json"), "{}").unwrap();
+        fs::write(p2.join("session-2026-03-08T12-00-bbbb2222.json"), "{}").unwrap();
+
+        let mut registry = Registry::new(tmp.path(), &tmp.path().join("cache.json"));
+        registry.reload().unwrap();
+
+        let executor = Executor::new(Config {
+            gemini_sessions_path: tmp.path().to_path_buf(),
+            trash_path: tmp.path().join("trash"),
+            audit_path: tmp.path().join("audit"),
+            cache_path: tmp.path().join("cache"),
+            dry_run_by_default: true,
+            icon_set: crate::utils::icons::IconSet::Ascii,
+        });
+        let mut app = App::new(registry, executor);
+        app.reload().unwrap();
+
+        // Should start at first session, skipping the first group header
+        assert!(matches!(
+            app.flat_items[app.selected_index],
+            Selection::Session(_)
+        ));
+
+        let first_idx = app.selected_index;
+        app.next();
+        // Should skip the second group header and go to next session
+        assert!(app.selected_index != first_idx);
+        assert!(matches!(
+            app.flat_items[app.selected_index],
+            Selection::Session(_)
+        ));
     }
 }
