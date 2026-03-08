@@ -1,9 +1,10 @@
 use castor::cli::{Cli, Commands};
 use castor::config::Config;
 use castor::core::Registry;
-use castor::core::session::SessionHealth;
 use castor::error::Result;
-use castor::ops::{Executor, export, prune, stats::StorageStats};
+use castor::ops::{
+    doctor::DoctorReport, executor::Executor, export, grep, prune, stats::StorageStats,
+};
 use castor::utils::term::{write_list_header, write_session_row};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
@@ -94,22 +95,7 @@ fn main() -> Result<()> {
             ignore_case,
         }) => {
             registry.reload()?;
-            let sessions = registry.list();
-            let mut matches = Vec::new();
-            let pattern_lower = pattern.to_lowercase();
-
-            for s in sessions {
-                let content = std::fs::read_to_string(&s.path)?;
-                let is_match = if ignore_case {
-                    content.to_lowercase().contains(&pattern_lower)
-                } else {
-                    content.contains(&pattern)
-                };
-
-                if is_match {
-                    matches.push(s);
-                }
-            }
+            let matches = grep::search_sessions(registry.list(), &pattern, ignore_case)?;
 
             if matches.is_empty() {
                 println!("No sessions found containing '{}'", pattern);
@@ -238,113 +224,81 @@ fn main() -> Result<()> {
             }
         }
         Some(Commands::Doctor) => {
+            registry.reload()?;
+            let report = DoctorReport::generate(registry.list(), &executor.config);
+
             println!(
                 "{}",
                 "Castor Doctor - Environment Diagnostics".cyan().bold()
             );
+
+            // 1. Basic Directory Checks
             let home = std::env::var("HOME")
                 .map(std::path::PathBuf::from)
                 .unwrap_or_default();
-
-            // 1. Basic Directory Checks
             let gemini_base = home.join(".gemini");
-            if gemini_base.exists() {
-                println!("{} Gemini base directory: {:?}", "✓".green(), gemini_base);
-            } else {
-                println!(
-                    "{} Gemini base directory NOT FOUND at {:?}",
-                    "✗".red(),
-                    gemini_base
-                );
-            }
 
-            if executor.config.gemini_sessions_path.exists() {
-                println!(
-                    "{} Sessions path: {:?}",
-                    "✓".green(),
-                    executor.config.gemini_sessions_path
-                );
-            } else {
-                println!(
-                    "{} Sessions path NOT FOUND: {:?}",
-                    "✗".red(),
-                    executor.config.gemini_sessions_path
-                );
-            }
+            let check_mark = |exists: bool| {
+                if exists { "✓".green() } else { "✗".red() }
+            };
 
-            if executor.config.trash_path.exists() {
-                println!(
-                    "{} Trash directory: {:?}",
-                    "✓".green(),
-                    executor.config.trash_path
-                );
-            } else {
-                println!(
-                    "{} Trash directory NOT FOUND: {:?}",
-                    "✗".red(),
-                    executor.config.trash_path
-                );
-            }
+            println!(
+                "{} Gemini base directory: {:?}",
+                check_mark(report.gemini_base_exists),
+                gemini_base
+            );
+            println!(
+                "{} Sessions path: {:?}",
+                check_mark(report.sessions_path_exists),
+                executor.config.gemini_sessions_path
+            );
+            println!(
+                "{} Trash directory: {:?}",
+                check_mark(report.trash_path_exists),
+                executor.config.trash_path
+            );
 
-            // 2. Integrity Detection
-            registry.reload()?;
-            let sessions = registry.list();
-            let total = sessions.len();
-            let mut orphaned = 0;
-            let mut errors = 0;
-            let mut risks = 0;
-            let mut no_root_file = 0;
-
-            for s in sessions {
-                match s.calculate_health() {
-                    SessionHealth::Warn => orphaned += 1,
-                    SessionHealth::Error => errors += 1,
-                    SessionHealth::Risk => risks += 1,
-                    SessionHealth::Unknown | SessionHealth::Ok => {}
-                }
-                if s.host_path.is_none() {
-                    no_root_file += 1;
-                }
-            }
-
+            // 2. Integrity
             println!("\n{}", "Session Integrity:".yellow().bold());
-            println!("{:<25} {}", "Total Sessions:", total);
+            println!("{:<25} {}", "Total Sessions:", report.total_sessions);
 
-            if orphaned > 0 {
+            if report.orphaned_count > 0 {
                 println!(
                     "{:<25} {}",
                     "Orphaned Sessions:",
-                    orphaned.to_string().red().bold()
+                    report.orphaned_count.to_string().red().bold()
                 );
+                println!("   (Hosts no longer exist on disk)");
             } else {
                 println!("{:<25} {}", "Orphaned Sessions:", "0".green());
             }
 
-            if errors > 0 {
+            if report.corrupted_count > 0 {
                 println!(
                     "{:<25} {}",
                     "Corrupted Sessions:",
-                    errors.to_string().red().bold()
+                    report.corrupted_count.to_string().red().bold()
                 );
             }
 
-            if risks > 0 {
+            if report.untrusted_count > 0 {
                 println!(
                     "{:<25} {}",
                     "Untrusted Sessions:",
-                    risks.to_string().magenta().bold()
+                    report.untrusted_count.to_string().magenta().bold()
                 );
             }
 
-            if no_root_file > 0 {
+            if report.untracked_hosts_count > 0 {
                 println!(
                     "{:<25} {}",
                     "Untracked Hosts:",
-                    no_root_file.to_string().yellow()
+                    report.untracked_hosts_count.to_string().yellow()
                 );
             }
 
-            if orphaned > 0 || errors > 0 || risks > 0 {
+            if report.orphaned_count > 0 || report.corrupted_count > 0 || report.untrusted_count > 0
+            {
                 println!(
                     "\n{} Hint: Use `castor list` to find unhealthy sessions or `prune` to clean up.",
                     "ℹ".blue()

@@ -61,3 +61,20 @@ impl Icons {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_icon_sets() {
+        let nf = Icons::get(IconSet::NerdFont);
+        assert_eq!(nf.folder, "󰉋");
+
+        let ascii = Icons::get(IconSet::Ascii);
+        assert_eq!(ascii.ok, "OK");
+
+        let emoji = Icons::get(IconSet::Emoji);
+        assert_eq!(emoji.error, "❌");
+    }
+}
