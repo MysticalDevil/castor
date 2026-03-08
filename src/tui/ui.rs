@@ -17,7 +17,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
             Constraint::Min(0),
             Constraint::Length(1), // Keys bar
         ])
-        .split(frame.size());
+        .split(frame.area());
 
     let main_layout = Layout::default()
         .direction(Direction::Horizontal)
