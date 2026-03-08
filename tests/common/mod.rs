@@ -31,6 +31,7 @@ impl TestContext {
             dry_run_by_default: false,
             icon_set: castor::utils::icons::IconSet::Ascii,
             theme: castor::tui::theme::ThemeConfig::default(),
+            preview: castor::config::PreviewConfig::default(),
         };
 
         Self {

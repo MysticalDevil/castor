@@ -1,6 +1,7 @@
 use crate::core::{Registry, Session};
 use crate::error::Result;
 use crate::ops::Executor;
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{ListItem, ListState};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -39,6 +40,32 @@ pub struct App {
     pub last_selected_id: Option<String>,
     pub current_preview: Option<String>,
     pub items_cache: Option<Vec<ListItem<'static>>>,
+    pub markdown_cache: HashMap<String, Text<'static>>,
+    pub force_deep_preview: bool,
+}
+
+pub fn to_owned_text(text: Text<'_>) -> Text<'static> {
+    let lines = text
+        .lines
+        .into_iter()
+        .map(|l| {
+            let alignment = l.alignment;
+            let spans: Vec<Span<'static>> = l
+                .spans
+                .into_iter()
+                .map(|s| {
+                    let style = s.style;
+                    Span::styled(s.content.into_owned(), style)
+                })
+                .collect();
+            let mut line = Line::from(spans);
+            if let Some(a) = alignment {
+                line = line.alignment(a);
+            }
+            line
+        })
+        .collect::<Vec<_>>();
+    Text::from(lines)
 }
 
 impl App {
@@ -57,6 +84,8 @@ impl App {
             current_preview: None,
             last_selected_id: None,
             items_cache: None,
+            markdown_cache: HashMap::new(),
+            force_deep_preview: false,
         }
     }
 
@@ -73,10 +102,10 @@ impl App {
         // Temporarily clear and re-add without full reload
         self.registry.sessions.clear();
         self.registry.session_indices.clear();
-        self.add_sessions(sessions)
+        self.add_sessions(sessions, true)
     }
 
-    pub fn add_sessions(&mut self, sessions: Vec<Arc<Session>>) -> Result<()> {
+    pub fn add_sessions(&mut self, sessions: Vec<Arc<Session>>, sort: bool) -> Result<()> {
         let home = std::env::var("HOME").ok();
 
         for s in sessions {
@@ -88,7 +117,7 @@ impl App {
                         s.project_id.clone()
                     }
                 }
-                GroupingMode::Month => s.updated_at.format("%Y-%m").to_string(),
+                GroupingMode::Month => s.updated_at.format("%Y-%m-%d").to_string(),
             };
 
             let index = self.registry.sessions.len();
@@ -101,23 +130,33 @@ impl App {
                 .push(index);
         }
 
-        self.rebuild_tree();
+        if sort {
+            self.rebuild_tree();
+        } else {
+            // Fast path: just mark cache as dirty
+            self.items_cache = None;
+        }
         Ok(())
     }
 
     pub fn rebuild_tree(&mut self) {
-        self.flat_items.clear();
-        self.groups = self.sessions_by_group.keys().cloned().collect();
+        let mut groups: Vec<String> = self.sessions_by_group.keys().cloned().collect();
 
-        self.groups.sort_by(|a, b| match self.grouping_mode {
+        groups.sort_by(|a, b| match self.grouping_mode {
             GroupingMode::Month => b.cmp(a),
             GroupingMode::Host => a.cmp(b),
         });
 
+        self.groups = groups;
+        self.flat_items.clear();
+        self.flat_items
+            .reserve(self.registry.sessions.len() + self.groups.len());
+
         for group in &self.groups {
             self.flat_items.push(Selection::Group(group.clone()));
             if let Some(indices) = self.sessions_by_group.get(group) {
-                // Sort indices by updated_at desc
+                // Sort indices by updated_at desc (use slice sort to avoid clone if possible)
+                // Actually we need to clone because indices is &Vec
                 let mut sorted_indices = indices.clone();
                 sorted_indices.sort_by(|&a, &b| {
                     let s_a = &self.registry.sessions[a];
@@ -204,6 +243,7 @@ impl App {
         if current_id != self.last_selected_id {
             self.current_preview = None;
             self.last_selected_id = current_id;
+            self.force_deep_preview = false;
         }
     }
 
@@ -214,6 +254,17 @@ impl App {
             return Some(self.registry.sessions[*i].clone());
         }
         None
+    }
+
+    pub fn request_deep_preview(&mut self) {
+        if self.get_selected_session().is_none() {
+            return;
+        }
+        self.force_deep_preview = true;
+        self.current_preview = Some("Loading deep preview...".to_string());
+        if let Some(id) = &self.last_selected_id {
+            self.markdown_cache.remove(id);
+        }
     }
 }
 
@@ -243,11 +294,12 @@ mod tests {
             dry_run_by_default: true,
             icon_set: crate::utils::icons::IconSet::Ascii,
             theme: crate::tui::theme::ThemeConfig::default(),
+            preview: crate::config::PreviewConfig::default(),
         });
         let mut app = App::new(registry, executor);
 
         let session = Arc::new(Session::from_path(&s_path, "proj1".into(), None).unwrap());
-        app.add_sessions(vec![session]).unwrap();
+        app.add_sessions(vec![session], true).unwrap();
 
         assert_eq!(app.flat_items.len(), 2);
         assert!(matches!(app.flat_items[1], Selection::SessionIndex(_)));

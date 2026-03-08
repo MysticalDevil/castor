@@ -49,7 +49,10 @@ impl Executor {
             return Err(CastorError::PathNotFound(session.path.clone()));
         }
 
-        std::fs::create_dir_all(target_path.parent().unwrap())?;
+        let target_parent = target_path.parent().ok_or_else(|| {
+            CastorError::Execution(format!("Invalid trash target path: {:?}", target_path))
+        })?;
+        std::fs::create_dir_all(target_parent)?;
 
         if session.path.is_dir() {
             let mut options = fs_extra::dir::CopyOptions::new();
@@ -137,7 +140,13 @@ impl Executor {
 
         self.logger.log(&entry)?;
 
-        std::fs::create_dir_all(latest_entry.original_path.parent().unwrap())?;
+        let restore_parent = latest_entry.original_path.parent().ok_or_else(|| {
+            CastorError::Execution(format!(
+                "Invalid restore destination path: {:?}",
+                latest_entry.original_path
+            ))
+        })?;
+        std::fs::create_dir_all(restore_parent)?;
 
         if trash_path.is_dir() {
             let mut options = fs_extra::dir::CopyOptions::new();

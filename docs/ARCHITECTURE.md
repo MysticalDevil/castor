@@ -33,7 +33,8 @@ This document describes the high-level architecture of Castor.
 
 - **Asynchronous Preview**: In the TUI, when a user selects a session, the file is read and parsed in a background thread to prevent UI stuttering.
 - **Debouncing**: Rapidly scrolling through sessions won't trigger hundreds of IO requests; a short delay is required before a preview is loaded.
-- **Limited Parsing**: For previews, only the first few segments of a file are read and parsed, which is critical for files exceeding several megabytes.
+- **Quick + Deep Preview**: Quick preview first tries structured JSON extraction from session head messages, then falls back to head/tail window scan. Deep preview (`p`) is explicitly triggered and bounded by file-size and character budgets.
+- **Limited Parsing**: Both quick and deep paths enforce message/character limits to keep UI latency bounded for multi-megabyte sessions.
 
 ## Security Model
 

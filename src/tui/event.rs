@@ -16,6 +16,9 @@ pub fn handle_key_event(
                 app.message = Some("Reloading...".to_string());
                 app.reload()?;
             }
+            KeyCode::Char('p') => {
+                app.request_deep_preview();
+            }
             KeyCode::Char('d') => {
                 if app.get_selected_session().is_some() {
                     app.input_mode = InputMode::ConfirmDelete;

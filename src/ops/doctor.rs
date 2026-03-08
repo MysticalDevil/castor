@@ -91,6 +91,7 @@ mod tests {
             dry_run_by_default: true,
             icon_set: crate::utils::icons::IconSet::Ascii,
             theme: crate::tui::theme::ThemeConfig::default(),
+            preview: crate::config::PreviewConfig::default(),
         };
 
         let report = DoctorReport::generate(&[Arc::new(s1)], &config);

@@ -5,7 +5,7 @@ use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
-    text::{Line, Span},
+    text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, Paragraph, Wrap},
 };
 
@@ -34,6 +34,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 fn render_tree(app: &mut App, frame: &mut Frame, area: Rect) {
     let theme = app.executor.config.theme.get_theme();
     let icons = Icons::get(app.executor.config.icon_set);
+    let line_budget = area.width.saturating_sub(6) as usize;
 
     let items = if let Some(cached) = &app.items_cache {
         cached.clone()
@@ -43,11 +44,14 @@ fn render_tree(app: &mut App, frame: &mut Frame, area: Rect) {
             .iter()
             .map(|sel| match sel {
                 Selection::Group(id) => {
-                    let prefix = match app.grouping_mode {
-                        GroupingMode::Host => format!("{} ", icons.folder),
-                        GroupingMode::Month => "🗓 ".to_string(),
-                    };
-                    ListItem::new(format!("{}{}", prefix, id)).style(
+                    let session_count = app
+                        .sessions_by_group
+                        .get(id)
+                        .map(|v| v.len())
+                        .unwrap_or(0usize);
+                    let group_label = format!("▸ {} ({})", id, session_count);
+                    let group_label = truncate_with_ellipsis(&group_label, line_budget);
+                    ListItem::new(group_label).style(
                         Style::default()
                             .fg(theme.folder)
                             .add_modifier(Modifier::BOLD),
@@ -56,17 +60,20 @@ fn render_tree(app: &mut App, frame: &mut Frame, area: Rect) {
                 Selection::SessionIndex(idx) => {
                     let session = &app.registry.sessions[*idx];
                     let health_symbol = match session.health {
-                        SessionHealth::Unknown => Span::raw(icons.unknown).fg(theme.key_desc),
-                        SessionHealth::Ok => Span::raw(icons.ok).green(),
-                        SessionHealth::Warn => Span::raw(icons.warn).yellow(),
-                        SessionHealth::Error => Span::raw(icons.error).red(),
-                        SessionHealth::Risk => Span::raw(icons.risk).magenta(),
+                        SessionHealth::Unknown => Span::raw("?").fg(theme.key_desc),
+                        SessionHealth::Ok => Span::raw("•").green(),
+                        SessionHealth::Warn => Span::raw("!").yellow(),
+                        SessionHealth::Error => Span::raw("×").red(),
+                        SessionHealth::Risk => Span::raw("▲").magenta(),
                     };
 
+                    let id_text =
+                        truncate_with_ellipsis(&session.display_id, line_budget.saturating_sub(6));
                     ListItem::new(Line::from(vec![
-                        Span::raw(format!("  {} ", icons.chat)),
+                        Span::raw("  "),
+                        Span::raw(format!("{} ", icons.chat)).fg(theme.key_desc),
                         health_symbol,
-                        Span::raw(format!(" {}", session.display_id)), // USE PRE-CALCULATED ID
+                        Span::raw(format!(" {}", id_text)),
                     ]))
                 }
             })
@@ -95,12 +102,29 @@ fn render_tree(app: &mut App, frame: &mut Frame, area: Rect) {
                 .fg(theme.selection_fg)
                 .add_modifier(Modifier::BOLD),
         )
-        .highlight_symbol("> ");
+        .highlight_symbol("› ");
 
     frame.render_stateful_widget(list, area, &mut app.list_state);
 }
 
-fn render_details(app: &App, frame: &mut Frame, area: Rect) {
+fn truncate_with_ellipsis(input: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    let count = input.chars().count();
+    if count <= max_chars {
+        return input.to_string();
+    }
+    if max_chars <= 1 {
+        return "…".to_string();
+    }
+    let kept = max_chars - 1;
+    let mut out = input.chars().take(kept).collect::<String>();
+    out.push('…');
+    out
+}
+
+fn render_details(app: &mut App, frame: &mut Frame, area: Rect) {
     let theme = app.executor.config.theme.get_theme();
     let details_layout = Layout::default()
         .direction(Direction::Vertical)
@@ -202,7 +226,22 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
             .current_preview
             .as_deref()
             .unwrap_or("Loading preview...");
-        let mut text = tui_markdown::from_str(preview_content);
+
+        // CACHE HIT: Only parse if not in cache or if it's the "Loading preview..." message
+        let mut text: Text = if let Some(session_id) = &app.last_selected_id
+            && preview_content != "Loading preview..."
+        {
+            if let Some(cached) = app.markdown_cache.get(session_id) {
+                cached.clone()
+            } else {
+                let parsed = tui_markdown::from_str(preview_content);
+                let owned = crate::tui::app::to_owned_text(parsed);
+                app.markdown_cache.insert(session_id.clone(), owned.clone());
+                owned
+            }
+        } else {
+            tui_markdown::from_str(preview_content)
+        };
 
         for line in &mut text.lines {
             let is_user = line.spans.iter().any(|s| s.content.contains("USER"));
@@ -271,6 +310,9 @@ fn render_keys_bar(app: &App, frame: &mut Frame, area: Rect) {
                 Span::raw("| "),
                 Span::styled("r ", Style::default().fg(theme.title)),
                 Span::styled("reload ", Style::default().fg(theme.key_desc)),
+                Span::raw("| "),
+                Span::styled("p ", Style::default().fg(theme.title)),
+                Span::styled("deep preview ", Style::default().fg(theme.key_desc)),
                 Span::raw("| "),
                 Span::styled("enter ", Style::default().fg(theme.title)),
                 Span::styled("select ", Style::default().fg(theme.key_desc)),

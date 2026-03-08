@@ -2,6 +2,7 @@ use crate::core::cache::{CacheEntry, MetadataCache};
 use crate::core::scanner::Scanner;
 use crate::core::session::Session;
 use crate::error::Result;
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -28,14 +29,21 @@ impl Registry {
     pub fn reload(&mut self) -> Result<()> {
         let mut new_sessions = self.scanner.scan()?;
 
-        // Apply cache and perform lazy validation
-        for s in &mut new_sessions {
+        // Apply cache and perform parallel deep validation for cache misses
+        new_sessions.par_iter_mut().for_each(|s| {
             if let Some(entry) = self.cache.get(&s.path, s.updated_at) {
                 s.health = entry.health;
                 s.name = entry.name;
                 s.validation_notes = entry.notes;
             } else {
                 s.deep_validate();
+            }
+        });
+
+        // Update cache for misses (serial because cache is not thread-safe yet, or we can use a mutex)
+        // Actually, we can just iterate again serially to update the cache for only the ones that changed.
+        for s in &new_sessions {
+            if self.cache.get(&s.path, s.updated_at).is_none() {
                 self.cache.update(
                     s.path.clone(),
                     CacheEntry {

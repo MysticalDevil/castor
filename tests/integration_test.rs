@@ -83,7 +83,7 @@ fn test_export_logic() {
     registry.reload().unwrap();
 
     let session = &registry.list()[0];
-    let md = export::session_to_markdown(session).unwrap();
+    let md = export::session_to_markdown(session, &ctx.config.preview).unwrap();
 
     assert!(md.contains("## USER"));
     assert!(md.contains("Markdown test"));

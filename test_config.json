@@ -2,7 +2,7 @@
   "gemini_sessions_path": "test_data/gemini_tmp",
   "trash_path": "test_data/trash",
   "audit_path": "test_data/audit",
-  "cache_path": "test_data/cache",
+  "cache_path": "test_data/cache/metadata.json",
   "dry_run_by_default": true,
   "icon_set": "Ascii",
   "theme": "TokyoNight"

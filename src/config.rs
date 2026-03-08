@@ -6,6 +6,27 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct PreviewConfig {
+    pub head_bytes: u64,
+    pub tail_bytes: u64,
+    pub small_full_parse_bytes: u64,
+    pub deep_preview_max_bytes: u64,
+    pub deep_preview_char_budget: usize,
+}
+
+impl Default for PreviewConfig {
+    fn default() -> Self {
+        Self {
+            head_bytes: 512 * 1024,
+            tail_bytes: 2 * 1024 * 1024,
+            small_full_parse_bytes: 2 * 1024 * 1024,
+            deep_preview_max_bytes: 64 * 1024 * 1024,
+            deep_preview_char_budget: 120_000,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     pub gemini_sessions_path: PathBuf,
     pub trash_path: PathBuf,
@@ -14,33 +35,43 @@ pub struct Config {
     pub dry_run_by_default: bool,
     pub icon_set: IconSet,
     pub theme: ThemeConfig,
+    #[serde(default)]
+    pub preview: PreviewConfig,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        let proj_dirs = ProjectDirs::from("com", "omega", "castor")
-            .expect("Could not determine home directory for configuration.");
-
-        let data_dir = proj_dirs.data_dir();
-        // XDG Standard:
-        // - Trash: data_dir/trash
-        // - Audit: data_dir/audit
-        // - Cache: cache_dir/ (e.g., ~/.cache/castor)
-        let cache_dir = proj_dirs.cache_dir();
-
         let home = std::env::var("HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("/tmp"));
         let default_gemini = home.join(".gemini").join("tmp");
 
+        let (trash_path, audit_path, cache_path) =
+            if let Some(proj_dirs) = ProjectDirs::from("com", "omega", "castor") {
+                // XDG Standard paths
+                (
+                    proj_dirs.data_dir().join("trash"),
+                    proj_dirs.data_dir().join("audit"),
+                    proj_dirs.cache_dir().join("metadata.json"),
+                )
+            } else {
+                let fallback_base = home.join(".local").join("share").join("castor");
+                (
+                    fallback_base.join("trash"),
+                    fallback_base.join("audit"),
+                    home.join(".cache").join("castor").join("metadata.json"),
+                )
+            };
+
         Self {
             gemini_sessions_path: default_gemini,
-            trash_path: data_dir.join("trash"),
-            audit_path: data_dir.join("audit"),
-            cache_path: cache_dir.to_path_buf(),
+            trash_path,
+            audit_path,
+            cache_path,
             dry_run_by_default: true,
             icon_set: IconSet::default(),
             theme: ThemeConfig::Preset("TokyoNight".to_string()),
+            preview: PreviewConfig::default(),
         }
     }
 }
@@ -59,9 +90,14 @@ impl Config {
             }
         }
 
-        let proj_dirs = ProjectDirs::from("com", "omega", "castor")
-            .expect("Could not determine config directory.");
-        let config_path = proj_dirs.config_dir().join("config.json");
+        let config_path = if let Some(proj_dirs) = ProjectDirs::from("com", "omega", "castor") {
+            proj_dirs.config_dir().join("config.json")
+        } else {
+            let home = std::env::var("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("/tmp"));
+            home.join(".config").join("castor").join("config.json")
+        };
 
         if config_path.exists() {
             let content = std::fs::read_to_string(config_path)?;
@@ -75,7 +111,9 @@ impl Config {
         std::fs::create_dir_all(&self.gemini_sessions_path)?;
         std::fs::create_dir_all(&self.trash_path)?;
         std::fs::create_dir_all(&self.audit_path)?;
-        std::fs::create_dir_all(&self.cache_path)?;
+        if let Some(parent) = self.cache_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         Ok(())
     }
 }
@@ -95,6 +133,7 @@ mod tests {
         assert_eq!(config.theme, ThemeConfig::Preset("TokyoNight".to_string()));
         // Ensure cache path uses cache_dir (XDG)
         assert!(config.cache_path.to_string_lossy().contains("cache"));
+        assert_eq!(config.preview.head_bytes, 512 * 1024);
     }
 
     #[test]
@@ -117,6 +156,7 @@ mod tests {
         assert_eq!(config.gemini_sessions_path, PathBuf::from("/tmp/gemini"));
         assert_eq!(config.icon_set, IconSet::Unicode);
         assert_eq!(config.theme, ThemeConfig::Preset("Gruvbox".to_string()));
+        assert_eq!(config.preview.deep_preview_max_bytes, 64 * 1024 * 1024);
     }
 
     #[test]
@@ -126,10 +166,11 @@ mod tests {
             gemini_sessions_path: tmp.path().join("sessions"),
             trash_path: tmp.path().join("trash"),
             audit_path: tmp.path().join("audit"),
-            cache_path: tmp.path().join("cache"),
+            cache_path: tmp.path().join("cache").join("metadata.json"),
             dry_run_by_default: true,
             icon_set: IconSet::Ascii,
             theme: ThemeConfig::default(),
+            preview: PreviewConfig::default(),
         };
 
         config.ensure_dirs().unwrap();

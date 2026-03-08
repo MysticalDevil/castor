@@ -1,5 +1,6 @@
 use crate::core::session::Session;
 use crate::error::Result;
+use rayon::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -14,24 +15,28 @@ impl Scanner {
         }
     }
 
-    /// Optimized scan that discovers sessions without deep content parsing.
+    /// Optimized scan that discovers sessions using parallel I/O.
     pub fn scan(&self) -> Result<Vec<Session>> {
-        let mut sessions = Vec::new();
-
         if !self.base_path.exists() {
-            return Ok(sessions);
+            return Ok(Vec::new());
         }
 
-        for entry in fs::read_dir(&self.base_path)?.flatten() {
-            let project_path = entry.path();
-            if project_path.is_dir() {
+        let project_dirs: Vec<PathBuf> = fs::read_dir(&self.base_path)?
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .map(|e| e.path())
+            .collect();
+
+        let results: Vec<Vec<Session>> = project_dirs
+            .into_par_iter()
+            .map(|project_path| {
+                let mut sessions = Vec::new();
                 let project_id = project_path
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown")
                     .to_string();
 
-                // Lazy Project Root discovery
                 let project_root_file = project_path.join(".project_root");
                 let host_path = fs::read_to_string(project_root_file)
                     .ok()
@@ -39,51 +44,53 @@ impl Scanner {
 
                 let chats_path = project_path.join("chats");
                 if chats_path.exists() && chats_path.is_dir() {
-                    for chat_entry in fs::read_dir(chats_path)?.flatten() {
-                        let path = chat_entry.path();
-                        if path.extension().is_some_and(|ext| ext == "json") {
-                            // FAST PATH: metadata-only initialization
-                            if let Ok(metadata) = chat_entry.metadata() {
-                                let updated_at = metadata
-                                    .modified()
-                                    .unwrap_or_else(|_| std::time::SystemTime::now())
-                                    .into();
+                    if let Ok(entries) = fs::read_dir(chats_path) {
+                        for chat_entry in entries.flatten() {
+                            let path = chat_entry.path();
+                            if path.extension().is_some_and(|ext| ext == "json") {
+                                if let Ok(metadata) = chat_entry.metadata() {
+                                    let updated_at = metadata
+                                        .modified()
+                                        .unwrap_or_else(|_| std::time::SystemTime::now())
+                                        .into();
 
-                                let id = path
-                                    .file_name()
-                                    .and_then(|n| n.to_str())
-                                    .unwrap_or("unknown")
-                                    .to_string();
+                                    let id = path
+                                        .file_name()
+                                        .and_then(|n| n.to_str())
+                                        .unwrap_or("unknown")
+                                        .to_string();
 
-                                let display_id = id
-                                    .strip_suffix(".json")
-                                    .unwrap_or(&id)
-                                    .split('-')
-                                    .next_back()
-                                    .unwrap_or(&id)
-                                    .to_string();
+                                    let display_id = id
+                                        .strip_suffix(".json")
+                                        .unwrap_or(&id)
+                                        .split('-')
+                                        .next_back()
+                                        .unwrap_or(&id)
+                                        .to_string();
 
-                                sessions.push(Session {
-                                    id,
-                                    display_id,
-                                    project_id: project_id.clone(),
-                                    host_path: host_path.clone(),
-                                    name: None,
-                                    path,
-                                    created_at: updated_at, // Approximate
-                                    updated_at,
-                                    size: metadata.len(),
-                                    health: crate::core::session::SessionHealth::Unknown,
-                                    validation_notes: Vec::new(),
-                                });
+                                    sessions.push(Session {
+                                        id,
+                                        display_id,
+                                        project_id: project_id.clone(),
+                                        host_path: host_path.clone(),
+                                        name: None,
+                                        path,
+                                        created_at: updated_at,
+                                        updated_at,
+                                        size: metadata.len(),
+                                        health: crate::core::session::SessionHealth::Unknown,
+                                        validation_notes: Vec::new(),
+                                    });
+                                }
                             }
                         }
                     }
                 }
-            }
-        }
+                sessions
+            })
+            .collect();
 
-        Ok(sessions)
+        Ok(results.into_iter().flatten().collect())
     }
 }
 

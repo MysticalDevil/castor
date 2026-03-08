@@ -16,14 +16,25 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
 use std::sync::Arc;
 use std::sync::mpsc;
+use std::sync::mpsc::RecvTimeoutError;
 use std::thread;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PreviewMode {
+    Quick,
+    Deep,
+}
 
 pub enum TuiEvent {
     Input(crossterm::event::KeyEvent),
     PartialScan(Vec<Arc<crate::core::Session>>),
     ScanComplete,
-    PreviewLoaded { id: String, content: String },
-    Tick,
+    PreviewLoaded {
+        id: String,
+        content: String,
+        mode: PreviewMode,
+    },
+    SessionUpdated(Arc<crate::core::Session>),
 }
 
 pub fn run(registry: Registry, executor: Executor) -> Result<()> {
@@ -100,30 +111,54 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
     });
 
     // 2. CONSTANT WORKER: Dedicated Preview Thread
-    let (tx_preview_worker, rx_preview_worker) =
-        mpsc::channel::<(Arc<crate::core::Session>, mpsc::Sender<TuiEvent>)>();
+    let (tx_preview_worker, rx_preview_worker) = mpsc::channel::<(
+        Arc<crate::core::Session>,
+        PreviewMode,
+        crate::config::PreviewConfig,
+        mpsc::Sender<TuiEvent>,
+    )>();
     thread::spawn(move || {
-        while let Ok((session, tx_out)) = rx_preview_worker.recv() {
-            let markdown = crate::ops::export::session_to_markdown_limited(&session, 20)
-                .unwrap_or_else(|_| "Error loading preview".to_string());
+        while let Ok((session, mode, preview_cfg, tx_out)) = rx_preview_worker.recv() {
+            let markdown = match mode {
+                PreviewMode::Quick => {
+                    crate::ops::export::session_to_markdown_limited(&session, 20, &preview_cfg)
+                }
+                PreviewMode::Deep => crate::ops::export::session_to_markdown_deep_limited(
+                    &session,
+                    200,
+                    &preview_cfg,
+                ),
+            }
+            .unwrap_or_else(|_| "Error loading preview".to_string());
 
             let _ = tx_out.send(TuiEvent::PreviewLoaded {
                 id: session.id.clone(),
                 content: markdown,
+                mode,
             });
         }
     });
 
-    // 3. Input polling thread
+    // 3. VALIDATION WORKER: Performs deep_validate for sessions with Unknown health
+    let (tx_validation, rx_validation) =
+        mpsc::channel::<(Arc<crate::core::Session>, mpsc::Sender<TuiEvent>)>();
+    thread::spawn(move || {
+        while let Ok((session, tx_out)) = rx_validation.recv() {
+            let mut s = (*session).clone();
+            s.deep_validate();
+            let _ = tx_out.send(TuiEvent::SessionUpdated(Arc::new(s)));
+        }
+    });
+
+    // 4. Input polling thread
     let tx_input = tx.clone();
     thread::spawn(move || {
         loop {
-            if crossterm::event::poll(std::time::Duration::from_millis(50)).unwrap_or(false)
+            if crossterm::event::poll(std::time::Duration::from_millis(20)).unwrap_or(false)
                 && let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read()
             {
                 let _ = tx_input.send(TuiEvent::Input(key));
             }
-            let _ = tx_input.send(TuiEvent::Tick);
         }
     });
 
@@ -131,8 +166,12 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
     app.message = Some("Streaming sessions...".to_string());
 
     let mut last_input_time = std::time::Instant::now();
+    let mut last_rebuild_time = std::time::Instant::now();
+    let mut last_session_update_render = std::time::Instant::now();
     let mut preview_triggered = true;
     let mut should_render = true;
+    let mut needs_rebuild = false;
+    let mut has_pending_session_visual_update = false;
 
     loop {
         if should_render {
@@ -142,15 +181,38 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
 
         match rx.recv_timeout(std::time::Duration::from_millis(20)) {
             Ok(TuiEvent::PartialScan(new_batch)) => {
-                app.add_sessions(new_batch)?;
-                should_render = true;
+                // Background validation for Unknown ones
+                for s in &new_batch {
+                    if s.health == crate::core::session::SessionHealth::Unknown {
+                        let _ = tx_validation.send((s.clone(), tx.clone()));
+                    }
+                }
+                app.add_sessions(new_batch, false)?; // DEFER SORT
+                needs_rebuild = true;
             }
             Ok(TuiEvent::ScanComplete) => {
                 app.message = None;
+                app.rebuild_tree();
+                needs_rebuild = false;
                 should_render = true;
             }
-            Ok(TuiEvent::PreviewLoaded { id, content }) => {
+            Ok(TuiEvent::SessionUpdated(updated_session)) => {
+                if let Some(&idx) = app.registry.session_indices.get(&updated_session.id) {
+                    app.registry.sessions[idx] = updated_session;
+                    // Batch visual refresh to avoid redrawing on every single worker update.
+                    has_pending_session_visual_update = true;
+                }
+            }
+            Ok(TuiEvent::PreviewLoaded { id, content, mode }) => {
                 if app.last_selected_id.as_ref() == Some(&id) {
+                    if mode == PreviewMode::Quick
+                        && app
+                            .current_preview
+                            .as_deref()
+                            .is_some_and(|p| p.contains("-- [ Deep preview ] --"))
+                    {
+                        continue;
+                    }
                     app.current_preview = Some(content);
                     should_render = true;
                 }
@@ -165,16 +227,51 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
                     preview_triggered = false;
                 }
             }
-            Ok(TuiEvent::Tick) => {
-                if !preview_triggered
-                    && last_input_time.elapsed() > std::time::Duration::from_millis(100)
-                    && let Some(s) = app.get_selected_session()
-                {
-                    let _ = tx_preview_worker.send((s, tx.clone()));
-                    preview_triggered = true;
-                }
-            }
-            Err(_) => {}
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+
+        // Periodic tasks run off timeout-driven loop instead of queued Tick events.
+        if needs_rebuild && last_rebuild_time.elapsed() > std::time::Duration::from_millis(250) {
+            app.rebuild_tree();
+            last_rebuild_time = std::time::Instant::now();
+            needs_rebuild = false;
+            should_render = true;
+        }
+
+        if has_pending_session_visual_update
+            && last_session_update_render.elapsed() > std::time::Duration::from_millis(200)
+        {
+            app.items_cache = None;
+            should_render = true;
+            has_pending_session_visual_update = false;
+            last_session_update_render = std::time::Instant::now();
+        }
+
+        if !preview_triggered
+            && last_input_time.elapsed() > std::time::Duration::from_millis(150)
+            && let Some(s) = app.get_selected_session()
+        {
+            let _ = tx_preview_worker.send((
+                s,
+                PreviewMode::Quick,
+                app.executor.config.preview.clone(),
+                tx.clone(),
+            ));
+            preview_triggered = true;
+        }
+
+        if app.force_deep_preview
+            && let Some(s) = app.get_selected_session()
+        {
+            let _ = tx_preview_worker.send((
+                s,
+                PreviewMode::Deep,
+                app.executor.config.preview.clone(),
+                tx.clone(),
+            ));
+            app.force_deep_preview = false;
+            preview_triggered = true;
         }
 
         if app.should_quit {

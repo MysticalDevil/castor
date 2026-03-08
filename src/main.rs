@@ -52,7 +52,10 @@ fn main() -> Result<()> {
                     if raw {
                         println!("{}", session.get_content()?);
                     } else {
-                        println!("{}", export::session_to_markdown(&session)?);
+                        println!(
+                            "{}",
+                            export::session_to_markdown(&session, &executor.config.preview)?
+                        );
                     }
                 } else {
                     println!("Session {} not found.", id);

@@ -41,6 +41,7 @@ castor tui
 - **Navigation**: Use `j/k` or arrow keys to move through the tree.
 - **Grouping**: Press `g` to toggle between Host and Month grouping.
 - **Actions**: Press `d` to delete (moves to trash), `r` to reload.
+- **Preview**: Press `p` to trigger deep preview for the selected session.
 
 ## 📂 Project Structure
 
