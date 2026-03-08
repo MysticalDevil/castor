@@ -22,7 +22,11 @@ impl Default for Config {
             .expect("Could not determine home directory for configuration.");
 
         let data_dir = proj_dirs.data_dir();
-        let _config_dir = proj_dirs.config_dir();
+        // XDG Standard:
+        // - Trash: data_dir/trash
+        // - Audit: data_dir/audit
+        // - Cache: cache_dir/ (e.g., ~/.cache/castor)
+        let cache_dir = proj_dirs.cache_dir();
 
         let home = std::env::var("HOME")
             .map(PathBuf::from)
@@ -33,10 +37,10 @@ impl Default for Config {
             gemini_sessions_path: default_gemini,
             trash_path: data_dir.join("trash"),
             audit_path: data_dir.join("audit"),
-            cache_path: data_dir.join("cache"),
+            cache_path: cache_dir.to_path_buf(),
             dry_run_by_default: true,
             icon_set: IconSet::default(),
-            theme: ThemeConfig::default(),
+            theme: ThemeConfig::Preset("TokyoNight".to_string()),
         }
     }
 }
@@ -87,7 +91,10 @@ mod tests {
         let config = Config::default();
         assert!(config.dry_run_by_default);
         assert_eq!(config.icon_set, IconSet::NerdFont);
-        assert_eq!(config.theme, ThemeConfig::default());
+        // Default theme should now be TokyoNight
+        assert_eq!(config.theme, ThemeConfig::Preset("TokyoNight".to_string()));
+        // Ensure cache path uses cache_dir (XDG)
+        assert!(config.cache_path.to_string_lossy().contains("cache"));
     }
 
     #[test]
@@ -101,7 +108,7 @@ mod tests {
             "cache_path": "/tmp/cache",
             "dry_run_by_default": false,
             "icon_set": "Unicode",
-            "theme": "TokyoNight"
+            "theme": "Gruvbox"
         }"#;
         fs::write(&config_path, data).unwrap();
 
@@ -109,7 +116,7 @@ mod tests {
         assert!(!config.dry_run_by_default);
         assert_eq!(config.gemini_sessions_path, PathBuf::from("/tmp/gemini"));
         assert_eq!(config.icon_set, IconSet::Unicode);
-        assert_eq!(config.theme, ThemeConfig::Preset("TokyoNight".to_string()));
+        assert_eq!(config.theme, ThemeConfig::Preset("Gruvbox".to_string()));
     }
 
     #[test]
