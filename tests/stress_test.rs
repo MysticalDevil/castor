@@ -13,7 +13,7 @@ fn test_registry_stress_load() {
             "stress_proj",
             &format!("session-2026-03-08T12-00-{:08}.json", i),
             "I am a stress test session content.",
-            0
+            0,
         );
     }
 
@@ -22,9 +22,13 @@ fn test_registry_stress_load() {
     let duration = start.elapsed();
 
     println!("Registry reload time for 1000 sessions: {:?}", duration);
-    
-    // Performance Requirement: Should load 1000 sessions in less than 500ms 
+
+    // Performance Requirement: Should load 1000 sessions in less than 500ms
     // (Actual time depends on machine, but this is a reasonable baseline for local SSD)
-    assert!(duration.as_millis() < 1000, "Registry load too slow: {:?}", duration);
+    assert!(
+        duration.as_millis() < 1000,
+        "Registry load too slow: {:?}",
+        duration
+    );
     assert_eq!(registry.list().len(), 1000);
 }

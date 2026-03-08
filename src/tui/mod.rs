@@ -24,14 +24,12 @@ pub enum TuiEvent {
 }
 
 pub fn run(registry: Registry, executor: Executor) -> Result<()> {
-    // setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Setup communication channels
     let (tx, rx) = mpsc::channel();
 
     // 1. Initial background scan
@@ -47,7 +45,7 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
     let tx_input = tx.clone();
     thread::spawn(move || {
         loop {
-            if crossterm::event::poll(std::time::Duration::from_millis(100)).unwrap_or(false)
+            if crossterm::event::poll(std::time::Duration::from_millis(50)).unwrap_or(false)
                 && let Ok(crossterm::event::Event::Key(key)) = crossterm::event::read()
             {
                 let _ = tx_input.send(TuiEvent::Input(key));
@@ -56,9 +54,12 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
         }
     });
 
-    // create app
     let mut app = App::new(registry, executor);
     app.message = Some("Scanning sessions...".to_string());
+
+    // Debounce timer for preview
+    let mut last_input_time = std::time::Instant::now();
+    let mut preview_triggered = true;
 
     loop {
         terminal.draw(|f| ui::render(&mut app, f))?;
@@ -68,11 +69,7 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
                 app.registry = new_registry;
                 app.reload()?;
                 app.message = None;
-
-                // Trigger initial preview load for the first item
-                if let Some(s) = app.get_selected_session() {
-                    trigger_async_preview(s.clone(), tx.clone());
-                }
+                preview_triggered = false; // Allow trigger for first item
             }
             Ok(TuiEvent::PreviewLoaded { id, content }) => {
                 if app.last_selected_id.as_ref() == Some(&id) {
@@ -83,14 +80,21 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
                 let old_id = app.last_selected_id.clone();
                 event::handle_key_event(&mut app, key)?;
 
-                // If selection changed, trigger new preview load
-                if app.last_selected_id != old_id
+                if app.last_selected_id != old_id {
+                    last_input_time = std::time::Instant::now();
+                    preview_triggered = false;
+                }
+            }
+            Ok(TuiEvent::Tick) => {
+                // Debounce: only trigger preview if 100ms passed since last input
+                if !preview_triggered
+                    && last_input_time.elapsed() > std::time::Duration::from_millis(100)
                     && let Some(s) = app.get_selected_session()
                 {
                     trigger_async_preview(s.clone(), tx.clone());
+                    preview_triggered = true;
                 }
             }
-            Ok(TuiEvent::Tick) => {}
             Err(_) => {}
         }
 
@@ -99,7 +103,6 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
         }
     }
 
-    // restore terminal
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen,)?;
     terminal.show_cursor()?;

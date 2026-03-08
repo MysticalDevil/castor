@@ -2,5 +2,7 @@
   "gemini_sessions_path": "test_data/gemini_tmp",
   "trash_path": "test_data/trash",
   "audit_path": "test_data/audit",
-  "dry_run_by_default": true
+  "cache_path": "test_data/cache",
+  "dry_run_by_default": true,
+  "icon_set": "Ascii"
 }
