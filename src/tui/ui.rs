@@ -31,52 +31,43 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     render_keys_bar(app, frame, root_layout[1]);
 }
 
-fn render_tree(app: &App, frame: &mut Frame, area: Rect) {
+fn render_tree(app: &mut App, frame: &mut Frame, area: Rect) {
     let icons = Icons::get(app.executor.config.icon_set);
     let items: Vec<ListItem> = app
         .flat_items
         .iter()
-        .enumerate()
-        .map(|(i, sel)| {
-            let style = if i == app.selected_index {
-                Style::default()
-                    .bg(Color::DarkGray)
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
-
-            match sel {
-                Selection::Group(id) => {
-                    let prefix = match app.grouping_mode {
-                        GroupingMode::Host => format!("{} ", icons.folder),
-                        GroupingMode::Month => "🗓 ".to_string(),
-                    };
-                    ListItem::new(format!("{}{}", prefix, id)).style(style.fg(Color::Cyan))
-                }
-                Selection::Session(id) => {
-                    let session = app.registry.find_by_id(id).unwrap();
-                    let health_symbol = match session.health {
-                        SessionHealth::Unknown => Span::raw(icons.unknown).fg(Color::DarkGray),
-                        SessionHealth::Ok => Span::raw(icons.ok).green(),
-                        SessionHealth::Warn => Span::raw(icons.warn).yellow(),
-                        SessionHealth::Error => Span::raw(icons.error).red(),
-                        SessionHealth::Risk => Span::raw(icons.risk).magenta(),
-                    };
-                    let display_id = id
-                        .strip_suffix(".json")
-                        .unwrap_or(id)
-                        .split('-')
-                        .next_back()
-                        .unwrap_or(id);
-                    ListItem::new(Line::from(vec![
-                        Span::raw(format!("  {} ", icons.chat)),
-                        health_symbol,
-                        Span::raw(format!(" {}", display_id)),
-                    ]))
-                    .style(style)
-                }
+        .map(|sel| match sel {
+            Selection::Group(id) => {
+                let prefix = match app.grouping_mode {
+                    GroupingMode::Host => format!("{} ", icons.folder),
+                    GroupingMode::Month => "🗓 ".to_string(),
+                };
+                ListItem::new(format!("{}{}", prefix, id)).style(
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )
+            }
+            Selection::Session(id) => {
+                let session = app.registry.find_by_id(id).unwrap();
+                let health_symbol = match session.health {
+                    SessionHealth::Unknown => Span::raw(icons.unknown).fg(Color::DarkGray),
+                    SessionHealth::Ok => Span::raw(icons.ok).green(),
+                    SessionHealth::Warn => Span::raw(icons.warn).yellow(),
+                    SessionHealth::Error => Span::raw(icons.error).red(),
+                    SessionHealth::Risk => Span::raw(icons.risk).magenta(),
+                };
+                let display_id = id
+                    .strip_suffix(".json")
+                    .unwrap_or(id)
+                    .split('-')
+                    .next_back()
+                    .unwrap_or(id);
+                ListItem::new(Line::from(vec![
+                    Span::raw(format!("  {} ", icons.chat)),
+                    health_symbol,
+                    Span::raw(format!(" {}", display_id)),
+                ]))
             }
         })
         .collect();
@@ -88,8 +79,16 @@ fn render_tree(app: &App, frame: &mut Frame, area: Rect) {
 
     let list = List::new(items)
         .block(Block::default().title(title).borders(Borders::ALL))
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
         .highlight_symbol("> ");
-    frame.render_widget(list, area);
+
+    // Stateful rendering for scrolling
+    frame.render_stateful_widget(list, area, &mut app.list_state);
 }
 
 fn render_details(app: &App, frame: &mut Frame, area: Rect) {

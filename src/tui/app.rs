@@ -1,6 +1,7 @@
 use crate::core::{Registry, Session};
 use crate::error::Result;
 use crate::ops::Executor;
+use ratatui::widgets::ListState;
 use std::collections::HashMap;
 
 pub enum InputMode {
@@ -27,7 +28,7 @@ pub struct App {
     pub groups: Vec<String>,
     pub sessions_by_group: HashMap<String, Vec<Session>>,
     pub flat_items: Vec<Selection>,
-    pub selected_index: usize,
+    pub list_state: ListState,
     pub input_mode: InputMode,
     pub grouping_mode: GroupingMode,
     pub should_quit: bool,
@@ -46,7 +47,7 @@ impl App {
             groups: Vec::new(),
             sessions_by_group: HashMap::new(),
             flat_items: Vec::new(),
-            selected_index: 0,
+            list_state: ListState::default(),
             input_mode: InputMode::Normal,
             grouping_mode: GroupingMode::Host,
             should_quit: false,
@@ -108,14 +109,12 @@ impl App {
 
         // Initialize selection to the first session if possible
         if !self.flat_items.is_empty() {
-            self.selected_index = 0;
-            if matches!(self.flat_items[0], Selection::Group(_)) {
+            self.list_state.select(Some(0));
+            if let Some(0) = self.list_state.selected()
+                && matches!(self.flat_items[0], Selection::Group(_))
+            {
                 self.next();
             }
-        }
-
-        if self.selected_index >= self.flat_items.len() && !self.flat_items.is_empty() {
-            self.selected_index = self.flat_items.len() - 1;
         }
 
         self.update_preview();
@@ -126,14 +125,16 @@ impl App {
         if self.flat_items.is_empty() {
             return;
         }
-        let start = self.selected_index;
+        let current = self.list_state.selected().unwrap_or(0);
+        let mut i = current;
         loop {
-            self.selected_index = (self.selected_index + 1) % self.flat_items.len();
-            if matches!(self.flat_items[self.selected_index], Selection::Session(_)) {
+            i = (i + 1) % self.flat_items.len();
+            if matches!(self.flat_items[i], Selection::Session(_)) {
+                self.list_state.select(Some(i));
                 break;
             }
-            if self.selected_index == start {
-                break; // Cycled through all, no session found
+            if i == current {
+                break;
             }
         }
         self.update_preview();
@@ -143,18 +144,20 @@ impl App {
         if self.flat_items.is_empty() {
             return;
         }
-        let start = self.selected_index;
+        let current = self.list_state.selected().unwrap_or(0);
+        let mut i = current;
         loop {
-            if self.selected_index == 0 {
-                self.selected_index = self.flat_items.len() - 1;
+            if i == 0 {
+                i = self.flat_items.len() - 1;
             } else {
-                self.selected_index -= 1;
+                i -= 1;
             }
-            if matches!(self.flat_items[self.selected_index], Selection::Session(_)) {
+            if matches!(self.flat_items[i], Selection::Session(_)) {
+                self.list_state.select(Some(i));
                 break;
             }
-            if self.selected_index == start {
-                break; // Cycled through all, no session found
+            if i == current {
+                break;
             }
         }
         self.update_preview();
@@ -162,17 +165,19 @@ impl App {
 
     /// Updates the preview cache if the selection has changed
     fn update_preview(&mut self) {
-        let current_id =
-            if let Some(Selection::Session(id)) = self.flat_items.get(self.selected_index) {
+        let current_id = if let Some(idx) = self.list_state.selected() {
+            if let Some(Selection::Session(id)) = self.flat_items.get(idx) {
                 Some(id.clone())
             } else {
                 None
-            };
+            }
+        } else {
+            None
+        };
 
         if current_id != self.last_selected_id {
             if let Some(id) = &current_id {
                 if let Some(session) = self.registry.find_by_id(id) {
-                    // Perform on-demand deep validation and markdown generation
                     let mut s_clone = session.clone();
                     s_clone.deep_validate();
                     self.current_preview = crate::ops::export::session_to_markdown(&s_clone).ok();
@@ -187,11 +192,12 @@ impl App {
     }
 
     pub fn get_selected_session(&self) -> Option<&Session> {
-        if let Some(Selection::Session(id)) = self.flat_items.get(self.selected_index) {
-            self.registry.find_by_id(id)
-        } else {
-            None
+        if let Some(idx) = self.list_state.selected()
+            && let Some(Selection::Session(id)) = self.flat_items.get(idx)
+        {
+            return self.registry.find_by_id(id);
         }
+        None
     }
 }
 
@@ -257,18 +263,16 @@ mod tests {
         let mut app = App::new(registry, executor);
         app.reload().unwrap();
 
-        // Should start at first session, skipping the first group header
         assert!(matches!(
-            app.flat_items[app.selected_index],
+            app.flat_items[app.list_state.selected().unwrap()],
             Selection::Session(_)
         ));
 
-        let first_idx = app.selected_index;
+        let first_idx = app.list_state.selected().unwrap();
         app.next();
-        // Should skip the second group header and go to next session
-        assert!(app.selected_index != first_idx);
+        assert!(app.list_state.selected().unwrap() != first_idx);
         assert!(matches!(
-            app.flat_items[app.selected_index],
+            app.flat_items[app.list_state.selected().unwrap()],
             Selection::Session(_)
         ));
     }
