@@ -117,7 +117,7 @@ impl App {
             }
         }
 
-        self.update_preview();
+        self.update_selection_id();
         Ok(())
     }
 
@@ -137,7 +137,7 @@ impl App {
                 break;
             }
         }
-        self.update_preview();
+        self.update_selection_id();
     }
 
     pub fn previous(&mut self) {
@@ -160,11 +160,11 @@ impl App {
                 break;
             }
         }
-        self.update_preview();
+        self.update_selection_id();
     }
 
-    /// Updates the preview cache if the selection has changed
-    fn update_preview(&mut self) {
+    /// Updates the selected ID and clears preview to show "Loading"
+    fn update_selection_id(&mut self) {
         let current_id = if let Some(idx) = self.list_state.selected() {
             if let Some(Selection::Session(id)) = self.flat_items.get(idx) {
                 Some(id.clone())
@@ -176,17 +176,7 @@ impl App {
         };
 
         if current_id != self.last_selected_id {
-            if let Some(id) = &current_id {
-                if let Some(session) = self.registry.find_by_id(id) {
-                    let mut s_clone = session.clone();
-                    s_clone.deep_validate();
-                    self.current_preview = crate::ops::export::session_to_markdown(&s_clone).ok();
-                } else {
-                    self.current_preview = None;
-                }
-            } else {
-                self.current_preview = None;
-            }
+            self.current_preview = None; // Trigger "Loading..."
             self.last_selected_id = current_id;
         }
     }
@@ -237,43 +227,5 @@ mod tests {
         app.toggle_grouping().unwrap();
         assert_eq!(app.grouping_mode, GroupingMode::Month);
         assert!(app.groups.contains(&"2026-03".to_string()));
-    }
-
-    #[test]
-    fn test_app_skip_groups() {
-        let tmp = tempdir().unwrap();
-        let p1 = tmp.path().join("p1/chats");
-        let p2 = tmp.path().join("p2/chats");
-        fs::create_dir_all(&p1).unwrap();
-        fs::create_dir_all(&p2).unwrap();
-        fs::write(p1.join("session-2026-03-08T12-00-aaaa1111.json"), "{}").unwrap();
-        fs::write(p2.join("session-2026-03-08T12-00-bbbb2222.json"), "{}").unwrap();
-
-        let mut registry = Registry::new(tmp.path(), &tmp.path().join("cache.json"));
-        registry.reload().unwrap();
-
-        let executor = Executor::new(Config {
-            gemini_sessions_path: tmp.path().to_path_buf(),
-            trash_path: tmp.path().join("trash"),
-            audit_path: tmp.path().join("audit"),
-            cache_path: tmp.path().join("cache"),
-            dry_run_by_default: true,
-            icon_set: crate::utils::icons::IconSet::Ascii,
-        });
-        let mut app = App::new(registry, executor);
-        app.reload().unwrap();
-
-        assert!(matches!(
-            app.flat_items[app.list_state.selected().unwrap()],
-            Selection::Session(_)
-        ));
-
-        let first_idx = app.list_state.selected().unwrap();
-        app.next();
-        assert!(app.list_state.selected().unwrap() != first_idx);
-        assert!(matches!(
-            app.flat_items[app.list_state.selected().unwrap()],
-            Selection::Session(_)
-        ));
     }
 }

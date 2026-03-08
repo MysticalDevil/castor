@@ -191,7 +191,7 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
         let preview_content = app
             .current_preview
             .as_deref()
-            .unwrap_or("No content or error reading session.");
+            .unwrap_or("Loading preview...");
 
         // Use tui-markdown for rich rendering
         let mut text = tui_markdown::from_str(preview_content);

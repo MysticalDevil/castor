@@ -3,20 +3,29 @@ use crate::error::Result;
 use std::path::{Path, PathBuf};
 
 pub fn session_to_markdown(session: &Session) -> Result<String> {
+    session_to_markdown_limited(session, usize::MAX)
+}
+
+/// Specialized version for TUI previews that limits the number of messages processed.
+pub fn session_to_markdown_limited(session: &Session, limit: usize) -> Result<String> {
     let content = std::fs::read_to_string(&session.path)?;
     let json: serde_json::Value = serde_json::from_str(&content)?;
     let mut markdown = String::new();
 
     if let Some(messages) = json.get("messages").and_then(|m| m.as_array()) {
         let mut last_role = String::new();
+        let mut count = 0;
 
         for msg in messages {
+            if count >= limit {
+                markdown.push_str("\n\n-- [ Preview limited to first few messages ] --");
+                break;
+            }
+
             let role = msg
                 .get("type")
                 .and_then(|t| t.as_str())
                 .unwrap_or("unknown");
-
-            // Map roles to consistent headers
             let display_role = match role {
                 "user" => "USER",
                 "assistant" => "GEMINI",
@@ -24,7 +33,6 @@ pub fn session_to_markdown(session: &Session) -> Result<String> {
             }
             .to_uppercase();
 
-            // Extract content text
             let mut text_parts = Vec::new();
             let content_val = msg.get("content").unwrap_or(&serde_json::Value::Null);
 
@@ -42,15 +50,13 @@ pub fn session_to_markdown(session: &Session) -> Result<String> {
                 }
             }
 
-            // Only proceed if there's actual text content
             if !text_parts.is_empty() {
                 let joined_text = text_parts.join("\n\n");
+                count += 1;
 
                 if display_role == last_role {
-                    // Same role, just append text with a separator
                     markdown.push_str(&format!("{}\n\n", joined_text));
                 } else {
-                    // New role, add header
                     markdown.push_str(&format!("## {}\n{}\n\n", display_role, joined_text));
                     last_role = display_role;
                 }
@@ -108,7 +114,6 @@ mod tests {
         let md = session_to_markdown(&session).unwrap();
         assert!(md.contains("## USER\nhello"));
         assert!(md.contains("## GEMINI\npart 1\n\npart 2"));
-        // Check that empty assistant message was ignored and not creating a new header
         let gemini_count = md.matches("## GEMINI").count();
         assert_eq!(gemini_count, 1);
     }

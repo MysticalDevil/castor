@@ -19,6 +19,7 @@ use std::thread;
 pub enum TuiEvent {
     Input(crossterm::event::KeyEvent),
     ScanComplete(Registry),
+    PreviewLoaded { id: String, content: String },
     Tick,
 }
 
@@ -33,7 +34,7 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
     // Setup communication channels
     let (tx, rx) = mpsc::channel();
 
-    // Start background scanning thread
+    // 1. Initial background scan
     let tx_scan = tx.clone();
     let mut scan_registry = Registry::new(&registry.scanner.base_path, &registry.cache_path);
     thread::spawn(move || {
@@ -42,7 +43,7 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
         }
     });
 
-    // Start input polling thread
+    // 2. Input polling thread
     let tx_input = tx.clone();
     thread::spawn(move || {
         loop {
@@ -62,14 +63,32 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
     loop {
         terminal.draw(|f| ui::render(&mut app, f))?;
 
-        match rx.recv_timeout(std::time::Duration::from_millis(50)) {
+        match rx.recv_timeout(std::time::Duration::from_millis(20)) {
             Ok(TuiEvent::ScanComplete(new_registry)) => {
                 app.registry = new_registry;
-                app.reload()?; // Recalculate tree
+                app.reload()?;
                 app.message = None;
+
+                // Trigger initial preview load for the first item
+                if let Some(s) = app.get_selected_session() {
+                    trigger_async_preview(s.clone(), tx.clone());
+                }
+            }
+            Ok(TuiEvent::PreviewLoaded { id, content }) => {
+                if app.last_selected_id.as_ref() == Some(&id) {
+                    app.current_preview = Some(content);
+                }
             }
             Ok(TuiEvent::Input(key)) => {
+                let old_id = app.last_selected_id.clone();
                 event::handle_key_event(&mut app, key)?;
+
+                // If selection changed, trigger new preview load
+                if app.last_selected_id != old_id
+                    && let Some(s) = app.get_selected_session()
+                {
+                    trigger_async_preview(s.clone(), tx.clone());
+                }
             }
             Ok(TuiEvent::Tick) => {}
             Err(_) => {}
@@ -86,4 +105,18 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
     terminal.show_cursor()?;
 
     Ok(())
+}
+
+fn trigger_async_preview(session: crate::core::Session, tx: mpsc::Sender<TuiEvent>) {
+    thread::spawn(move || {
+        let s_clone = session.clone();
+        // Use a limited markdown conversion for performance
+        let content = crate::ops::export::session_to_markdown_limited(&s_clone, 20)
+            .unwrap_or_else(|_| "Error loading preview".to_string());
+
+        let _ = tx.send(TuiEvent::PreviewLoaded {
+            id: session.id,
+            content,
+        });
+    });
 }
