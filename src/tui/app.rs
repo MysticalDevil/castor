@@ -32,6 +32,10 @@ pub struct App {
     pub grouping_mode: GroupingMode,
     pub should_quit: bool,
     pub message: Option<String>,
+
+    // Performance: Cache for the currently selected session's preview
+    pub current_preview: Option<String>,
+    pub last_selected_id: Option<String>,
 }
 
 impl App {
@@ -47,6 +51,8 @@ impl App {
             grouping_mode: GroupingMode::Host,
             should_quit: false,
             message: None,
+            current_preview: None,
+            last_selected_id: None,
         }
     }
 
@@ -85,7 +91,6 @@ impl App {
         }
 
         self.groups = self.sessions_by_group.keys().cloned().collect();
-        // Sort groups: Month desc, Host asc
         self.groups.sort_by(|a, b| match self.grouping_mode {
             GroupingMode::Month => b.cmp(a),
             GroupingMode::Host => a.cmp(b),
@@ -103,12 +108,15 @@ impl App {
         if self.selected_index >= self.flat_items.len() && !self.flat_items.is_empty() {
             self.selected_index = self.flat_items.len() - 1;
         }
+
+        self.update_preview();
         Ok(())
     }
 
     pub fn next(&mut self) {
         if !self.flat_items.is_empty() {
             self.selected_index = (self.selected_index + 1) % self.flat_items.len();
+            self.update_preview();
         }
     }
 
@@ -119,6 +127,33 @@ impl App {
             } else {
                 self.selected_index -= 1;
             }
+            self.update_preview();
+        }
+    }
+
+    /// Updates the preview cache if the selection has changed
+    fn update_preview(&mut self) {
+        let current_id =
+            if let Some(Selection::Session(id)) = self.flat_items.get(self.selected_index) {
+                Some(id.clone())
+            } else {
+                None
+            };
+
+        if current_id != self.last_selected_id {
+            if let Some(id) = &current_id {
+                if let Some(session) = self.registry.find_by_id(id) {
+                    // Perform on-demand deep validation and markdown generation
+                    let mut s_clone = session.clone();
+                    s_clone.deep_validate();
+                    self.current_preview = crate::ops::export::session_to_markdown(&s_clone).ok();
+                } else {
+                    self.current_preview = None;
+                }
+            } else {
+                self.current_preview = None;
+            }
+            self.last_selected_id = current_id;
         }
     }
 
@@ -164,8 +199,6 @@ mod tests {
         assert_eq!(app.grouping_mode, GroupingMode::Host);
         app.toggle_grouping().unwrap();
         assert_eq!(app.grouping_mode, GroupingMode::Month);
-
-        // Month group for 2026-03
         assert!(app.groups.contains(&"2026-03".to_string()));
     }
 }

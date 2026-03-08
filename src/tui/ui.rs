@@ -1,5 +1,4 @@
 use crate::core::session::SessionHealth;
-use crate::ops::export;
 use crate::tui::app::{App, GroupingMode, InputMode, Selection};
 use crate::utils::icons::Icons;
 use ratatui::{
@@ -189,16 +188,16 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
         );
         frame.render_widget(status_block, details_layout[0]);
 
-        // 2. Conversation Preview Panel (Using tui-markdown)
-        let markdown_content = match export::session_to_markdown(session) {
-            Ok(md) => md,
-            Err(_) => "Error reading session content.".to_string(),
-        };
+        // 2. Conversation Preview Panel (Using Cache)
+        let preview_content = app
+            .current_preview
+            .as_deref()
+            .unwrap_or("No content or error reading session.");
 
         // Use tui-markdown for rich rendering
-        let mut text = tui_markdown::from_str(&markdown_content);
+        let mut text = tui_markdown::from_str(preview_content);
 
-        // Post-process to colorize USER and GEMINI headers specifically
+        // Post-process to colorize USER and GEMINI headers
         for line in &mut text.lines {
             let is_user = line.spans.iter().any(|s| s.content.contains("USER"));
             let is_gemini = line.spans.iter().any(|s| s.content.contains("GEMINI"));
@@ -220,7 +219,7 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
                     .title(" Conversation Preview ")
                     .borders(Borders::ALL),
             )
-            .wrap(Wrap { trim: false }); // keep markdown spacing
+            .wrap(Wrap { trim: false });
         frame.render_widget(preview_block, details_layout[1]);
     } else {
         let msg = app
