@@ -356,11 +356,10 @@ fn render_keys_bar(app: &App, frame: &mut Frame, area: Rect) {
 mod tests {
     use super::*;
     use crate::config::{Config, PreviewConfig};
-    use crate::core::{Registry, Session};
+    use crate::core::Registry;
     use crate::ops::Executor;
     use ratatui::{Terminal, backend::TestBackend};
     use std::fs;
-    use std::sync::Arc;
     use tempfile::tempdir;
 
     fn make_app_with_one_session() -> App {

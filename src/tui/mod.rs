@@ -37,6 +37,25 @@ pub enum TuiEvent {
     SessionUpdated(Arc<crate::core::Session>),
 }
 
+fn has_deep_preview_marker(current_preview: Option<&str>) -> bool {
+    current_preview.is_some_and(|p| p.contains("-- [ Deep preview ] --"))
+}
+
+fn should_apply_preview_update(
+    selected_id: Option<&str>,
+    event_id: &str,
+    mode: PreviewMode,
+    current_preview: Option<&str>,
+) -> bool {
+    if selected_id != Some(event_id) {
+        return false;
+    }
+    if mode == PreviewMode::Quick && has_deep_preview_marker(current_preview) {
+        return false;
+    }
+    true
+}
+
 pub fn run(registry: Registry, executor: Executor) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -204,15 +223,12 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
                 }
             }
             Ok(TuiEvent::PreviewLoaded { id, content, mode }) => {
-                if app.last_selected_id.as_ref() == Some(&id) {
-                    if mode == PreviewMode::Quick
-                        && app
-                            .current_preview
-                            .as_deref()
-                            .is_some_and(|p| p.contains("-- [ Deep preview ] --"))
-                    {
-                        continue;
-                    }
+                if should_apply_preview_update(
+                    app.last_selected_id.as_deref(),
+                    &id,
+                    mode,
+                    app.current_preview.as_deref(),
+                ) {
                     app.current_preview = Some(content);
                     should_render = true;
                 }
@@ -284,4 +300,53 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
     terminal.show_cursor()?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_should_apply_preview_update_for_matching_id() {
+        let ok = should_apply_preview_update(
+            Some("session-a"),
+            "session-a",
+            PreviewMode::Quick,
+            Some("Loading preview..."),
+        );
+        assert!(ok);
+    }
+
+    #[test]
+    fn test_should_reject_preview_update_for_non_selected_id() {
+        let ok = should_apply_preview_update(
+            Some("session-a"),
+            "session-b",
+            PreviewMode::Quick,
+            Some("Loading preview..."),
+        );
+        assert!(!ok);
+    }
+
+    #[test]
+    fn test_should_reject_quick_preview_when_deep_preview_active() {
+        let ok = should_apply_preview_update(
+            Some("session-a"),
+            "session-a",
+            PreviewMode::Quick,
+            Some("-- [ Deep preview ] --\n\ncontent"),
+        );
+        assert!(!ok);
+    }
+
+    #[test]
+    fn test_should_accept_deep_preview_when_deep_preview_active() {
+        let ok = should_apply_preview_update(
+            Some("session-a"),
+            "session-a",
+            PreviewMode::Deep,
+            Some("-- [ Deep preview ] --\n\ncontent"),
+        );
+        assert!(ok);
+    }
 }

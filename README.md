@@ -2,6 +2,8 @@
 
 `castor` is a secure, local session manager for the Gemini CLI, written in Rust. It provides a modern interface to inspect, manage, and clean up your local conversation history while prioritizing safety through a default dry-run policy and soft-delete mechanism.
 
+Current stable release: `v0.1.0` (see [CHANGELOG.md](CHANGELOG.md)).
+
 ## 🌟 Features
 
 - **Project-Aware Scanning**: Automatically groups sessions by the project they originated from.
@@ -59,6 +61,17 @@ Use `just` to run common tasks:
 - `just check`: Run the full quality gate (fmt, clippy, test, coverage).
 - `just test-tui`: Generate a rich test dataset and launch the TUI.
 - `just perf-bench`: Run repeatable performance benchmarks (`1k/5k/10k` reload tests).
+
+## 🔁 CI
+
+The repository includes a GitHub Actions workflow at `.github/workflows/ci.yml` that runs:
+- `cargo test -- --nocapture`
+- `cargo tarpaulin --ignore-tests --fail-under 40 --out Stdout --timeout 300`
+
+## 🏷 Releases
+
+- Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
+- The first stable tag is `v0.1.0`.
 
 ## 📄 License
 
