@@ -1,4 +1,5 @@
 use crate::error::{CastorError, Result};
+use crate::tui::theme::ThemeConfig;
 use crate::utils::icons::IconSet;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,7 @@ pub struct Config {
     pub cache_path: PathBuf,
     pub dry_run_by_default: bool,
     pub icon_set: IconSet,
+    pub theme: ThemeConfig,
 }
 
 impl Default for Config {
@@ -34,6 +36,7 @@ impl Default for Config {
             cache_path: data_dir.join("cache"),
             dry_run_by_default: true,
             icon_set: IconSet::default(),
+            theme: ThemeConfig::default(),
         }
     }
 }
@@ -84,6 +87,7 @@ mod tests {
         let config = Config::default();
         assert!(config.dry_run_by_default);
         assert_eq!(config.icon_set, IconSet::NerdFont);
+        assert_eq!(config.theme, ThemeConfig::default());
     }
 
     #[test]
@@ -96,7 +100,8 @@ mod tests {
             "audit_path": "/tmp/audit",
             "cache_path": "/tmp/cache",
             "dry_run_by_default": false,
-            "icon_set": "Unicode"
+            "icon_set": "Unicode",
+            "theme": "TokyoNight"
         }"#;
         fs::write(&config_path, data).unwrap();
 
@@ -104,6 +109,7 @@ mod tests {
         assert!(!config.dry_run_by_default);
         assert_eq!(config.gemini_sessions_path, PathBuf::from("/tmp/gemini"));
         assert_eq!(config.icon_set, IconSet::Unicode);
+        assert_eq!(config.theme, ThemeConfig::Preset("TokyoNight".to_string()));
     }
 
     #[test]
@@ -116,6 +122,7 @@ mod tests {
             cache_path: tmp.path().join("cache"),
             dry_run_by_default: true,
             icon_set: IconSet::Ascii,
+            theme: ThemeConfig::default(),
         };
 
         config.ensure_dirs().unwrap();

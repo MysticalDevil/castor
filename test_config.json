@@ -4,5 +4,6 @@
   "audit_path": "test_data/audit",
   "cache_path": "test_data/cache",
   "dry_run_by_default": true,
-  "icon_set": "Ascii"
+  "icon_set": "Ascii",
+  "theme": "TokyoNight"
 }

@@ -32,6 +32,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 }
 
 fn render_tree(app: &mut App, frame: &mut Frame, area: Rect) {
+    let theme = app.executor.config.theme.get_theme();
     let icons = Icons::get(app.executor.config.icon_set);
     let items: Vec<ListItem> = app
         .flat_items
@@ -44,14 +45,14 @@ fn render_tree(app: &mut App, frame: &mut Frame, area: Rect) {
                 };
                 ListItem::new(format!("{}{}", prefix, id)).style(
                     Style::default()
-                        .fg(Color::Cyan)
+                        .fg(theme.folder)
                         .add_modifier(Modifier::BOLD),
                 )
             }
             Selection::Session(id) => {
                 let session = app.registry.find_by_id(id).unwrap();
                 let health_symbol = match session.health {
-                    SessionHealth::Unknown => Span::raw(icons.unknown).fg(Color::DarkGray),
+                    SessionHealth::Unknown => Span::raw(icons.unknown).fg(theme.key_desc),
                     SessionHealth::Ok => Span::raw(icons.ok).green(),
                     SessionHealth::Warn => Span::raw(icons.warn).yellow(),
                     SessionHealth::Error => Span::raw(icons.error).red(),
@@ -78,20 +79,26 @@ fn render_tree(app: &mut App, frame: &mut Frame, area: Rect) {
     };
 
     let list = List::new(items)
-        .block(Block::default().title(title).borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.border))
+                .title_style(Style::default().fg(theme.title)),
+        )
         .highlight_style(
             Style::default()
-                .bg(Color::DarkGray)
-                .fg(Color::Yellow)
+                .bg(theme.selection_bg)
+                .fg(theme.selection_fg)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("> ");
 
-    // Stateful rendering for scrolling
     frame.render_stateful_widget(list, area, &mut app.list_state);
 }
 
 fn render_details(app: &App, frame: &mut Frame, area: Rect) {
+    let theme = app.executor.config.theme.get_theme();
     let details_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -101,7 +108,6 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
         .split(area);
 
     if let Some(session) = app.get_selected_session() {
-        // 1. File Status Panel
         let home = std::env::var("HOME").ok();
         let host_display = session
             .host_path
@@ -111,7 +117,7 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
 
         let health = &session.health;
         let health_color = match health {
-            SessionHealth::Unknown => Color::DarkGray,
+            SessionHealth::Unknown => theme.key_desc,
             SessionHealth::Ok => Color::Green,
             SessionHealth::Warn => Color::Yellow,
             SessionHealth::Error => Color::Red,
@@ -123,7 +129,7 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
                 Span::styled(
                     "ID:       ",
                     Style::default()
-                        .fg(Color::Cyan)
+                        .fg(theme.title)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(&session.id),
@@ -132,7 +138,7 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
                 Span::styled(
                     "Project:  ",
                     Style::default()
-                        .fg(Color::Cyan)
+                        .fg(theme.title)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(&session.project_id),
@@ -141,7 +147,7 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
                 Span::styled(
                     "Host:     ",
                     Style::default()
-                        .fg(Color::Cyan)
+                        .fg(theme.title)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(host_display),
@@ -150,7 +156,7 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
                 Span::styled(
                     "Updated:  ",
                     Style::default()
-                        .fg(Color::Cyan)
+                        .fg(theme.title)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(session.updated_at.format("%Y-%m-%d %H:%M:%S").to_string()),
@@ -159,7 +165,7 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
                 Span::styled(
                     "Size:     ",
                     Style::default()
-                        .fg(Color::Cyan)
+                        .fg(theme.title)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(format!("{:.2} KB", session.size as f64 / 1024.0)),
@@ -168,7 +174,7 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
                 Span::styled(
                     "Health:   ",
                     Style::default()
-                        .fg(Color::Cyan)
+                        .fg(theme.title)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
@@ -183,31 +189,29 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
         let status_block = Paragraph::new(status_text).block(
             Block::default()
                 .title(" File Status ")
-                .borders(Borders::ALL),
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.border))
+                .title_style(Style::default().fg(theme.title)),
         );
         frame.render_widget(status_block, details_layout[0]);
 
-        // 2. Conversation Preview Panel (Using Cache)
         let preview_content = app
             .current_preview
             .as_deref()
             .unwrap_or("Loading preview...");
-
-        // Use tui-markdown for rich rendering
         let mut text = tui_markdown::from_str(preview_content);
 
-        // Post-process to colorize USER and GEMINI headers
         for line in &mut text.lines {
             let is_user = line.spans.iter().any(|s| s.content.contains("USER"));
             let is_gemini = line.spans.iter().any(|s| s.content.contains("GEMINI"));
 
             if is_user {
                 for span in &mut line.spans {
-                    span.style = span.style.fg(Color::Blue).add_modifier(Modifier::BOLD);
+                    span.style = span.style.fg(theme.user_msg).add_modifier(Modifier::BOLD);
                 }
             } else if is_gemini {
                 for span in &mut line.spans {
-                    span.style = span.style.fg(Color::Green).add_modifier(Modifier::BOLD);
+                    span.style = span.style.fg(theme.gemini_msg).add_modifier(Modifier::BOLD);
                 }
             }
         }
@@ -216,7 +220,9 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
             .block(
                 Block::default()
                     .title(" Conversation Preview ")
-                    .borders(Borders::ALL),
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme.border))
+                    .title_style(Style::default().fg(theme.title)),
             )
             .wrap(Wrap { trim: false });
         frame.render_widget(preview_block, details_layout[1]);
@@ -226,40 +232,45 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
             .as_deref()
             .unwrap_or("Select a session to view details");
         let placeholder = Paragraph::new(msg)
-            .block(Block::default().borders(Borders::ALL))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme.border)),
+            )
             .alignment(ratatui::layout::Alignment::Center);
         frame.render_widget(placeholder, area);
     }
 }
 
 fn render_keys_bar(app: &App, frame: &mut Frame, area: Rect) {
+    let theme = app.executor.config.theme.get_theme();
     let mut spans = vec![Span::styled(
         "[KEYS] ",
         Style::default()
-            .fg(Color::Magenta)
+            .fg(theme.key_hint)
             .add_modifier(Modifier::BOLD),
     )];
 
     match app.input_mode {
         InputMode::Normal => {
             spans.extend(vec![
-                Span::styled("q ", Style::default().fg(Color::Cyan)),
-                Span::styled("quit ", Style::default().fg(Color::DarkGray)),
+                Span::styled("q ", Style::default().fg(theme.title)),
+                Span::styled("quit ", Style::default().fg(theme.key_desc)),
                 Span::raw("| "),
-                Span::styled("j/k ", Style::default().fg(Color::Cyan)),
-                Span::styled("navigate ", Style::default().fg(Color::DarkGray)),
+                Span::styled("j/k ", Style::default().fg(theme.title)),
+                Span::styled("navigate ", Style::default().fg(theme.key_desc)),
                 Span::raw("| "),
-                Span::styled("g ", Style::default().fg(Color::Cyan)),
-                Span::styled("group ", Style::default().fg(Color::DarkGray)),
+                Span::styled("g ", Style::default().fg(theme.title)),
+                Span::styled("group ", Style::default().fg(theme.key_desc)),
                 Span::raw("| "),
-                Span::styled("d ", Style::default().fg(Color::Cyan)),
-                Span::styled("delete ", Style::default().fg(Color::DarkGray)),
+                Span::styled("d ", Style::default().fg(theme.title)),
+                Span::styled("delete ", Style::default().fg(theme.key_desc)),
                 Span::raw("| "),
-                Span::styled("r ", Style::default().fg(Color::Cyan)),
-                Span::styled("reload ", Style::default().fg(Color::DarkGray)),
+                Span::styled("r ", Style::default().fg(theme.title)),
+                Span::styled("reload ", Style::default().fg(theme.key_desc)),
                 Span::raw("| "),
-                Span::styled("enter ", Style::default().fg(Color::Cyan)),
-                Span::styled("select ", Style::default().fg(Color::DarkGray)),
+                Span::styled("enter ", Style::default().fg(theme.title)),
+                Span::styled("select ", Style::default().fg(theme.key_desc)),
             ]);
         }
         InputMode::ConfirmDelete => {
@@ -269,14 +280,18 @@ fn render_keys_bar(app: &App, frame: &mut Frame, area: Rect) {
                     Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled("y ", Style::default().fg(Color::Green)),
-                Span::styled("yes ", Style::default().fg(Color::DarkGray)),
+                Span::styled("yes ", Style::default().fg(theme.key_desc)),
                 Span::raw("| "),
                 Span::styled("n ", Style::default().fg(Color::Yellow)),
-                Span::styled("no ", Style::default().fg(Color::DarkGray)),
+                Span::styled("no ", Style::default().fg(theme.key_desc)),
             ]);
         }
     }
 
-    let bar = Paragraph::new(Line::from(spans)).block(Block::default().borders(Borders::ALL));
+    let bar = Paragraph::new(Line::from(spans)).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme.border)),
+    );
     frame.render_widget(bar, area);
 }
