@@ -34,44 +34,53 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 fn render_tree(app: &mut App, frame: &mut Frame, area: Rect) {
     let theme = app.executor.config.theme.get_theme();
     let icons = Icons::get(app.executor.config.icon_set);
-    let items: Vec<ListItem> = app
-        .flat_items
-        .iter()
-        .map(|sel| match sel {
-            Selection::Group(id) => {
-                let prefix = match app.grouping_mode {
-                    GroupingMode::Host => format!("{} ", icons.folder),
-                    GroupingMode::Month => "🗓 ".to_string(),
-                };
-                ListItem::new(format!("{}{}", prefix, id)).style(
-                    Style::default()
-                        .fg(theme.folder)
-                        .add_modifier(Modifier::BOLD),
-                )
-            }
-            Selection::Session(id) => {
-                let session = app.registry.find_by_id(id).unwrap();
-                let health_symbol = match session.health {
-                    SessionHealth::Unknown => Span::raw(icons.unknown).fg(theme.key_desc),
-                    SessionHealth::Ok => Span::raw(icons.ok).green(),
-                    SessionHealth::Warn => Span::raw(icons.warn).yellow(),
-                    SessionHealth::Error => Span::raw(icons.error).red(),
-                    SessionHealth::Risk => Span::raw(icons.risk).magenta(),
-                };
-                let display_id = id
-                    .strip_suffix(".json")
-                    .unwrap_or(id)
-                    .split('-')
-                    .next_back()
-                    .unwrap_or(id);
-                ListItem::new(Line::from(vec![
-                    Span::raw(format!("  {} ", icons.chat)),
-                    health_symbol,
-                    Span::raw(format!(" {}", display_id)),
-                ]))
-            }
-        })
-        .collect();
+
+    // Performance: Use cached items if available
+    let items = if let Some(cached) = &app.items_cache {
+        cached.clone()
+    } else {
+        let new_items: Vec<ListItem> = app
+            .flat_items
+            .iter()
+            .map(|sel| match sel {
+                Selection::Group(id) => {
+                    let prefix = match app.grouping_mode {
+                        GroupingMode::Host => format!("{} ", icons.folder),
+                        GroupingMode::Month => "🗓 ".to_string(),
+                    };
+                    ListItem::new(format!("{}{}", prefix, id)).style(
+                        Style::default()
+                            .fg(theme.folder)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                }
+                Selection::Session(id) => {
+                    let session = app.registry.find_by_id(id).unwrap();
+                    let health_symbol = match session.health {
+                        SessionHealth::Unknown => Span::raw(icons.unknown).fg(theme.key_desc),
+                        SessionHealth::Ok => Span::raw(icons.ok).green(),
+                        SessionHealth::Warn => Span::raw(icons.warn).yellow(),
+                        SessionHealth::Error => Span::raw(icons.error).red(),
+                        SessionHealth::Risk => Span::raw(icons.risk).magenta(),
+                    };
+                    let display_id = id
+                        .strip_suffix(".json")
+                        .unwrap_or(id)
+                        .split('-')
+                        .next_back()
+                        .unwrap_or(id);
+                    ListItem::new(Line::from(vec![
+                        Span::raw(format!("  {} ", icons.chat)),
+                        health_symbol,
+                        Span::raw(format!(" {}", display_id)),
+                    ]))
+                }
+            })
+            .collect();
+
+        app.items_cache = Some(new_items.clone());
+        new_items
+    };
 
     let title = match app.grouping_mode {
         GroupingMode::Host => " Projects / Sessions ",
@@ -108,6 +117,7 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
         .split(area);
 
     if let Some(session) = app.get_selected_session() {
+        // 1. File Status Panel
         let home = std::env::var("HOME").ok();
         let host_display = session
             .host_path
@@ -195,12 +205,15 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
         );
         frame.render_widget(status_block, details_layout[0]);
 
+        // 2. Conversation Preview Panel
         let preview_content = app
             .current_preview
             .as_deref()
             .unwrap_or("Loading preview...");
+
         let mut text = tui_markdown::from_str(preview_content);
 
+        // Apply theme colors to role headers
         for line in &mut text.lines {
             let is_user = line.spans.iter().any(|s| s.content.contains("USER"));
             let is_gemini = line.spans.iter().any(|s| s.content.contains("GEMINI"));

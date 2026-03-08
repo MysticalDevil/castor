@@ -21,7 +21,7 @@ pub use theme::{Theme, ThemeConfig};
 
 pub enum TuiEvent {
     Input(crossterm::event::KeyEvent),
-    PartialScan(Vec<crate::core::Session>), // New: Streamed sessions
+    PartialScan(Vec<crate::core::Session>),
     ScanComplete,
     PreviewLoaded { id: String, content: String },
     Tick,
@@ -38,14 +38,13 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
     // Setup communication channels
     let (tx, rx) = mpsc::channel();
 
-    // 1. IMPROVED: Streaming background scan
+    // 1. Initial background scan
     let tx_scan = tx.clone();
     let base_path = registry.scanner.base_path.clone();
     let cache_path = registry.cache_path.clone();
 
     thread::spawn(move || {
         let inner_registry = Registry::new(&base_path, &cache_path);
-        // We'll perform a custom scan loop here to support streaming
         if let Ok(all_dirs) = std::fs::read_dir(&base_path) {
             for entry in all_dirs.flatten() {
                 let project_path = entry.path();
@@ -76,7 +75,6 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
                                     host_path.clone(),
                                 )
                             {
-                                // Attempt fast cache hit first
                                 if let Some(entry) = inner_registry.cache.get(&s.path, s.updated_at)
                                 {
                                     s.health = entry.health;
@@ -172,13 +170,12 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
 fn trigger_async_preview(session: crate::core::Session, tx: mpsc::Sender<TuiEvent>) {
     thread::spawn(move || {
         let s_clone = session.clone();
-        // Use a limited markdown conversion for performance
-        let content = crate::ops::export::session_to_markdown_limited(&s_clone, 20)
+        let markdown = crate::ops::export::session_to_markdown_limited(&s_clone, 20)
             .unwrap_or_else(|_| "Error loading preview".to_string());
 
         let _ = tx.send(TuiEvent::PreviewLoaded {
             id: session.id,
-            content,
+            content: markdown,
         });
     });
 }

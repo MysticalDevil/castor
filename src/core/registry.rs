@@ -2,10 +2,12 @@ use crate::core::cache::{CacheEntry, MetadataCache};
 use crate::core::scanner::Scanner;
 use crate::core::session::Session;
 use crate::error::Result;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub struct Registry {
     pub sessions: Vec<Session>,
+    pub session_indices: HashMap<String, usize>, // $O(1)$ lookup map
     pub scanner: Scanner,
     pub cache: MetadataCache,
     pub cache_path: PathBuf,
@@ -15,6 +17,7 @@ impl Registry {
     pub fn new(base_path: &Path, cache_path: &Path) -> Self {
         Self {
             sessions: Vec::new(),
+            session_indices: HashMap::new(),
             scanner: Scanner::new(base_path),
             cache: MetadataCache::load(cache_path),
             cache_path: cache_path.to_path_buf(),
@@ -31,8 +34,6 @@ impl Registry {
                 s.name = entry.name;
                 s.validation_notes = entry.notes;
             } else {
-                // Not in cache, validate now (for CLI list mode)
-                // In TUI mode, we might want to keep it Unknown until selected
                 s.deep_validate();
                 self.cache.update(
                     s.path.clone(),
@@ -47,18 +48,33 @@ impl Registry {
         }
 
         self.sessions = new_sessions;
+        self.rebuild_index();
         self.cache.save(&self.cache_path)?;
         Ok(())
     }
 
+    pub fn rebuild_index(&mut self) {
+        self.session_indices.clear();
+        for (i, s) in self.sessions.iter().enumerate() {
+            self.session_indices.insert(s.id.clone(), i);
+        }
+    }
+
     pub fn find_by_id(&self, id: &str) -> Option<&Session> {
-        self.sessions.iter().find(|s| s.id == id)
+        self.session_indices
+            .get(id)
+            .and_then(|&i| self.sessions.get(i))
     }
 
     pub fn find(&self, query: &str) -> Option<&Session> {
+        // Fast path: check ID first
+        if let Some(s) = self.find_by_id(query) {
+            return Some(s);
+        }
+        // Slow path: check names
         self.sessions
             .iter()
-            .find(|s| s.id == query || s.name.as_ref().is_some_and(|n| n == query))
+            .find(|s| s.name.as_ref().is_some_and(|n| n == query))
     }
 
     pub fn list(&self) -> &[Session] {

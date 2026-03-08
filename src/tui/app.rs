@@ -1,7 +1,7 @@
 use crate::core::{Registry, Session};
 use crate::error::Result;
 use crate::ops::Executor;
-use ratatui::widgets::ListState;
+use ratatui::widgets::{ListItem, ListState};
 use std::collections::HashMap;
 
 pub enum InputMode {
@@ -34,9 +34,10 @@ pub struct App {
     pub should_quit: bool,
     pub message: Option<String>,
 
-    // Performance: Cache for the currently selected session's preview
-    pub current_preview: Option<String>,
+    // Performance: Caches
     pub last_selected_id: Option<String>,
+    pub current_preview: Option<String>, // Store raw string to avoid lifetime issues
+    pub items_cache: Option<Vec<ListItem<'static>>>,
 }
 
 impl App {
@@ -54,10 +55,23 @@ impl App {
             message: None,
             current_preview: None,
             last_selected_id: None,
+            items_cache: None,
         }
     }
 
-    /// Incremental loading: add a batch of sessions and rebuild the tree view
+    pub fn toggle_grouping(&mut self) -> Result<()> {
+        self.grouping_mode = match self.grouping_mode {
+            GroupingMode::Host => GroupingMode::Month,
+            GroupingMode::Month => GroupingMode::Host,
+        };
+        // Full regroup
+        let sessions = self.registry.sessions.clone();
+        self.registry.sessions.clear();
+        self.registry.session_indices.clear();
+        self.sessions_by_group.clear();
+        self.add_sessions(sessions)
+    }
+
     pub fn add_sessions(&mut self, sessions: Vec<Session>) -> Result<()> {
         let home = std::env::var("HOME").ok();
 
@@ -73,20 +87,19 @@ impl App {
                 GroupingMode::Month => s.updated_at.format("%Y-%m").to_string(),
             };
 
-            // Add to registry and local grouping
             self.registry.sessions.push(s.clone());
             self.sessions_by_group.entry(group_key).or_default().push(s);
         }
 
+        self.registry.rebuild_index();
         self.rebuild_tree();
         Ok(())
     }
 
-    fn rebuild_tree(&mut self) {
+    pub fn rebuild_tree(&mut self) {
         self.flat_items.clear();
         self.groups = self.sessions_by_group.keys().cloned().collect();
 
-        // Sort groups: Month desc, Host asc
         self.groups.sort_by(|a, b| match self.grouping_mode {
             GroupingMode::Month => b.cmp(a),
             GroupingMode::Host => a.cmp(b),
@@ -95,10 +108,9 @@ impl App {
         for group in &self.groups {
             self.flat_items.push(Selection::Group(group.clone()));
             if let Some(sessions) = self.sessions_by_group.get(group) {
-                // Sort sessions within group by updated_at desc
-                let mut sorted_sessions = sessions.clone();
-                sorted_sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-                for s in sorted_sessions {
+                let mut sorted = sessions.clone();
+                sorted.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+                for s in sorted {
                     self.flat_items.push(Selection::Session(s.id.clone()));
                 }
             }
@@ -111,26 +123,10 @@ impl App {
                 self.next();
             }
         }
-    }
 
-    pub fn toggle_grouping(&mut self) -> Result<()> {
-        self.grouping_mode = match self.grouping_mode {
-            GroupingMode::Host => GroupingMode::Month,
-            GroupingMode::Month => GroupingMode::Host,
-        };
-        // When toggling, we need a full regroup of all already loaded sessions
-        let sessions = self.registry.list().to_vec();
-        self.sessions_by_group.clear();
-        self.registry.sessions.clear();
-        self.add_sessions(sessions)
-    }
-
-    pub fn reload(&mut self) -> Result<()> {
-        // Full reset for a clean reload
-        self.registry.sessions.clear();
-        self.sessions_by_group.clear();
-        self.rebuild_tree();
-        Ok(())
+        // Invalidate items cache
+        self.items_cache = None;
+        self.update_selection_id();
     }
 
     pub fn next(&mut self) {
@@ -175,6 +171,14 @@ impl App {
         self.update_selection_id();
     }
 
+    pub fn reload(&mut self) -> Result<()> {
+        self.registry.sessions.clear();
+        self.registry.session_indices.clear();
+        self.sessions_by_group.clear();
+        self.rebuild_tree();
+        Ok(())
+    }
+
     fn update_selection_id(&mut self) {
         let current_id = if let Some(idx) = self.list_state.selected() {
             if let Some(Selection::Session(id)) = self.flat_items.get(idx) {
@@ -217,7 +221,9 @@ mod tests {
         let s_path = project_path.join("session-2026-03-08T12-00-aaaa1111.json");
         fs::write(&s_path, "{}").unwrap();
 
-        let registry = Registry::new(tmp.path(), &tmp.path().join("cache.json"));
+        let mut registry = Registry::new(tmp.path(), &tmp.path().join("cache.json"));
+        registry.reload().unwrap();
+
         let executor = Executor::new(Config {
             gemini_sessions_path: tmp.path().to_path_buf(),
             trash_path: tmp.path().join("trash"),
@@ -232,7 +238,7 @@ mod tests {
         let session = Session::from_path(&s_path, "proj1".into(), None).unwrap();
         app.add_sessions(vec![session]).unwrap();
 
-        assert_eq!(app.flat_items.len(), 2); // 1 Group + 1 Session
+        assert_eq!(app.flat_items.len(), 2);
         assert!(matches!(app.flat_items[1], Selection::Session(_)));
     }
 }
