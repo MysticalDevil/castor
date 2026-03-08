@@ -36,6 +36,10 @@ check-coverage:
 gen-test-data:
     python3 scripts/generate_test_data.py
 
+# Generate 2000+ sessions for stress testing
+gen-stress-data:
+    python3 scripts/generate_test_data.py 2000
+
 # List sessions using the generated test data
 test-list: gen-test-data
     cargo run -- --config test_config.json list
@@ -44,7 +48,15 @@ test-list: gen-test-data
 test-tui: gen-test-data
     cargo run -- --config test_config.json tui
 
-# Main Quality Gate: Formatting -> Linting -> Tests -> Coverage
+# Stress test: Run CLI list on 2000+ sessions
+stress-cli: gen-stress-data
+    time cargo run -- --config test_config.json list > /dev/null
+
+# Stress test: Run TUI on 2000+ sessions
+stress-tui: gen-stress-data
+    cargo run -- --config test_config.json tui
+
+# Main Quality Gate
 check:
     cargo fmt --all -- --check
     cargo clippy -- -D warnings
