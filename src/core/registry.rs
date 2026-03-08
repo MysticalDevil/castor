@@ -98,17 +98,18 @@ mod tests {
 
     #[test]
     fn test_registry_with_cache() {
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("create tempdir");
         let base = tmp.path().join("gemini");
         let cache_file = tmp.path().join("cache.json");
         let chat_dir = base.join("p1/chats");
-        fs::create_dir_all(&chat_dir).unwrap();
+        fs::create_dir_all(&chat_dir).expect("create chats dir");
 
         let s_path = chat_dir.join("session-2026-03-08T12-00-aaaa1111.json");
-        fs::write(&s_path, r#"{"messages": [{"type":"user","content":"hi"}]}"#).unwrap();
+        fs::write(&s_path, r#"{"messages": [{"type":"user","content":"hi"}]}"#)
+            .expect("write session fixture");
 
         let mut registry = Registry::new(&base, &cache_file);
-        registry.reload().unwrap();
+        registry.reload().expect("reload registry");
         assert_eq!(registry.list()[0].name, Some("hi".into()));
 
         // Modify cache file manually to test reuse
@@ -116,10 +117,10 @@ mod tests {
         if let Some(entry) = cache.entries.get_mut(&s_path) {
             entry.name = Some("cached_name".into());
         }
-        cache.save(&cache_file).unwrap();
+        cache.save(&cache_file).expect("save metadata cache");
 
         let mut registry2 = Registry::new(&base, &cache_file);
-        registry2.reload().unwrap();
+        registry2.reload().expect("reload second registry");
         assert_eq!(registry2.list()[0].name, Some("cached_name".into()));
     }
 }

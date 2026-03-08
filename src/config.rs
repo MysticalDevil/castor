@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn test_config_load_file() {
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("create tempdir");
         let config_path = tmp.path().join("config.json");
         let data = r#"{
             "gemini_sessions_path": "/tmp/gemini",
@@ -149,9 +149,9 @@ mod tests {
             "icon_set": "Unicode",
             "theme": "Gruvbox"
         }"#;
-        fs::write(&config_path, data).unwrap();
+        fs::write(&config_path, data).expect("write config file");
 
-        let config = Config::load(Some(&config_path)).unwrap();
+        let config = Config::load(Some(&config_path)).expect("load config from file");
         assert!(!config.dry_run_by_default);
         assert_eq!(config.gemini_sessions_path, PathBuf::from("/tmp/gemini"));
         assert_eq!(config.icon_set, IconSet::Unicode);
@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn test_ensure_dirs() {
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("create tempdir");
         let config = Config {
             gemini_sessions_path: tmp.path().join("sessions"),
             trash_path: tmp.path().join("trash"),
@@ -173,7 +173,7 @@ mod tests {
             preview: PreviewConfig::default(),
         };
 
-        config.ensure_dirs().unwrap();
+        config.ensure_dirs().expect("ensure config dirs");
         assert!(tmp.path().join("sessions").exists());
         assert!(tmp.path().join("trash").exists());
         assert!(tmp.path().join("audit").exists());

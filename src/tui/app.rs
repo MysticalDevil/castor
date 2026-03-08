@@ -3,7 +3,7 @@ use crate::error::Result;
 use crate::ops::Executor;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{ListItem, ListState};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 pub enum InputMode {
@@ -29,6 +29,7 @@ pub struct App {
     pub executor: Executor,
     pub groups: Vec<String>,
     pub sessions_by_group: HashMap<String, Vec<usize>>, // Stores INDICES only
+    pub collapsed_groups: HashSet<String>,
     pub flat_items: Vec<Selection>,
     pub list_state: ListState,
     pub input_mode: InputMode,
@@ -75,6 +76,7 @@ impl App {
             executor,
             groups: Vec::new(),
             sessions_by_group: HashMap::new(),
+            collapsed_groups: HashSet::new(),
             flat_items: Vec::new(),
             list_state: ListState::default(),
             input_mode: InputMode::Normal,
@@ -97,6 +99,7 @@ impl App {
 
         // Zero-copy regroup: just clear the indices map and re-group existing sessions
         self.sessions_by_group.clear();
+        self.collapsed_groups.clear();
         let sessions = self.registry.sessions.clone(); // Clones Arcs only
 
         // Temporarily clear and re-add without full reload
@@ -154,6 +157,9 @@ impl App {
 
         for group in &self.groups {
             self.flat_items.push(Selection::Group(group.clone()));
+            if self.collapsed_groups.contains(group) {
+                continue;
+            }
             if let Some(indices) = self.sessions_by_group.get(group) {
                 // Sort indices by updated_at desc (use slice sort to avoid clone if possible)
                 // Actually we need to clone because indices is &Vec
@@ -166,6 +172,16 @@ impl App {
                 for idx in sorted_indices {
                     self.flat_items.push(Selection::SessionIndex(idx));
                 }
+            }
+        }
+
+        if let Some(selected) = self.list_state.selected()
+            && selected >= self.flat_items.len()
+        {
+            if self.flat_items.is_empty() {
+                self.list_state.select(None);
+            } else {
+                self.list_state.select(Some(self.flat_items.len() - 1));
             }
         }
 
@@ -266,6 +282,73 @@ impl App {
             self.markdown_cache.remove(id);
         }
     }
+
+    fn find_group_for_session_index(&self, session_idx: usize) -> Option<String> {
+        self.sessions_by_group.iter().find_map(|(group, indices)| {
+            if indices.contains(&session_idx) {
+                Some(group.clone())
+            } else {
+                None
+            }
+        })
+    }
+
+    fn selected_group_or_parent(&self) -> Option<String> {
+        let selected = self.list_state.selected()?;
+        match self.flat_items.get(selected)? {
+            Selection::Group(group) => Some(group.clone()),
+            Selection::SessionIndex(idx) => self.find_group_for_session_index(*idx),
+        }
+    }
+
+    pub fn collapse_selected_group(&mut self) {
+        let Some(group) = self.selected_group_or_parent() else {
+            return;
+        };
+        self.collapsed_groups.insert(group.clone());
+        self.rebuild_tree();
+        if let Some(group_pos) = self
+            .flat_items
+            .iter()
+            .position(|item| matches!(item, Selection::Group(g) if g == &group))
+        {
+            self.list_state.select(Some(group_pos));
+            self.update_selection_id();
+        }
+    }
+
+    pub fn expand_selected_group(&mut self) {
+        let Some(group) = self.selected_group_or_parent() else {
+            return;
+        };
+        if self.collapsed_groups.remove(&group) {
+            self.rebuild_tree();
+        }
+    }
+
+    pub fn toggle_selected_group(&mut self) {
+        let Some(group) = self.selected_group_or_parent() else {
+            return;
+        };
+        if self.collapsed_groups.contains(&group) {
+            self.collapsed_groups.remove(&group);
+        } else {
+            self.collapsed_groups.insert(group.clone());
+        }
+        self.rebuild_tree();
+        if let Some(group_pos) = self
+            .flat_items
+            .iter()
+            .position(|item| matches!(item, Selection::Group(g) if g == &group))
+        {
+            self.list_state.select(Some(group_pos));
+            self.update_selection_id();
+        }
+    }
+
+    pub fn is_group_collapsed(&self, group: &str) -> bool {
+        self.collapsed_groups.contains(group)
+    }
 }
 
 #[cfg(test)]
@@ -277,20 +360,20 @@ mod tests {
 
     #[test]
     fn test_app_incremental_loading() {
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("create tempdir");
         let project_path = tmp.path().join("proj1/chats");
-        fs::create_dir_all(&project_path).unwrap();
+        fs::create_dir_all(&project_path).expect("create project chats dir");
         let s_path = project_path.join("session-2026-03-08T12-00-aaaa1111.json");
-        fs::write(&s_path, "{}").unwrap();
+        fs::write(&s_path, "{}").expect("write empty session");
 
         let mut registry = Registry::new(tmp.path(), &tmp.path().join("cache.json"));
-        registry.reload().unwrap();
+        registry.reload().expect("reload registry");
 
         let executor = Executor::new(Config {
             gemini_sessions_path: tmp.path().to_path_buf(),
             trash_path: tmp.path().join("trash"),
             audit_path: tmp.path().join("audit"),
-            cache_path: tmp.path().join("cache"),
+            cache_path: tmp.path().join("cache").join("metadata.json"),
             dry_run_by_default: true,
             icon_set: crate::utils::icons::IconSet::Ascii,
             theme: crate::tui::theme::ThemeConfig::default(),
@@ -298,10 +381,54 @@ mod tests {
         });
         let mut app = App::new(registry, executor);
 
-        let session = Arc::new(Session::from_path(&s_path, "proj1".into(), None).unwrap());
-        app.add_sessions(vec![session], true).unwrap();
+        let session = Arc::new(
+            Session::from_path(&s_path, "proj1".into(), None).expect("create session from path"),
+        );
+        app.add_sessions(vec![session], true)
+            .expect("add session to app");
 
         assert_eq!(app.flat_items.len(), 2);
         assert!(matches!(app.flat_items[1], Selection::SessionIndex(_)));
+    }
+
+    #[test]
+    fn test_group_collapse_and_expand() {
+        let tmp = tempdir().expect("create tempdir");
+        let project_path = tmp.path().join("proj1/chats");
+        fs::create_dir_all(&project_path).expect("create project chats dir");
+        let s1 = project_path.join("session-2026-03-08T12-00-aaaa1111.json");
+        let s2 = project_path.join("session-2026-03-08T12-01-bbbb2222.json");
+        fs::write(&s1, "{}").expect("write first session");
+        fs::write(&s2, "{}").expect("write second session");
+
+        let mut registry = Registry::new(tmp.path(), &tmp.path().join("cache.json"));
+        registry.reload().expect("reload registry");
+        let sessions = registry.sessions.clone();
+        registry.sessions.clear();
+        registry.session_indices.clear();
+
+        let executor = Executor::new(Config {
+            gemini_sessions_path: tmp.path().to_path_buf(),
+            trash_path: tmp.path().join("trash"),
+            audit_path: tmp.path().join("audit"),
+            cache_path: tmp.path().join("cache").join("metadata.json"),
+            dry_run_by_default: true,
+            icon_set: crate::utils::icons::IconSet::Ascii,
+            theme: crate::tui::theme::ThemeConfig::default(),
+            preview: crate::config::PreviewConfig::default(),
+        });
+        let mut app = App::new(registry, executor);
+
+        app.add_sessions(sessions, true).expect("add sessions");
+        let expanded_len = app.flat_items.len();
+        assert!(expanded_len >= 3);
+
+        app.list_state.select(Some(0));
+        app.collapse_selected_group();
+        let collapsed_len = app.flat_items.len();
+        assert!(collapsed_len < expanded_len);
+
+        app.expand_selected_group();
+        assert_eq!(app.flat_items.len(), expanded_len);
     }
 }

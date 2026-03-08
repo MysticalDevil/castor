@@ -18,7 +18,9 @@ fn test_registry_stress_load() {
     }
 
     let start = Instant::now();
-    registry.reload().unwrap();
+    registry
+        .reload()
+        .expect("reload registry during stress test");
     let duration = start.elapsed();
 
     println!("Registry reload time for 1000 sessions: {:?}", duration);

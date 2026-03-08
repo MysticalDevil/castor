@@ -102,23 +102,24 @@ mod tests {
 
     #[test]
     fn test_scanner_empty() {
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("create tempdir");
         let scanner = Scanner::new(tmp.path());
-        let results = scanner.scan().unwrap();
+        let results = scanner.scan().expect("scan empty tree");
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_scanner_with_data() {
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("create tempdir");
         let project_dir = tmp.path().join("proj1");
         let chats_dir = project_dir.join("chats");
-        fs::create_dir_all(&chats_dir).unwrap();
-        fs::write(chats_dir.join("session-1.json"), "{}").unwrap();
-        fs::write(project_dir.join(".project_root"), "/home/user/proj1").unwrap();
+        fs::create_dir_all(&chats_dir).expect("create chats dir");
+        fs::write(chats_dir.join("session-1.json"), "{}").expect("write session fixture");
+        fs::write(project_dir.join(".project_root"), "/home/user/proj1")
+            .expect("write project root marker");
 
         let scanner = Scanner::new(tmp.path());
-        let results = scanner.scan().unwrap();
+        let results = scanner.scan().expect("scan tree with one session");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].project_id, "proj1");
         assert_eq!(

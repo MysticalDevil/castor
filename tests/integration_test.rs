@@ -22,7 +22,7 @@ fn test_full_prune_and_restore_cycle() {
         60,
     );
 
-    registry.reload().unwrap();
+    registry.reload().expect("reload registry after seeding");
     assert_eq!(registry.list().len(), 2);
 
     let to_prune = prune::find_sessions_to_prune(registry.list(), 30);
@@ -30,16 +30,20 @@ fn test_full_prune_and_restore_cycle() {
     assert_eq!(to_prune[0].id, "session-2026-01-01T10-00-oldold22.json");
 
     for s in &to_prune {
-        executor.delete_soft(s, false).unwrap();
+        executor
+            .delete_soft(s, false)
+            .expect("soft delete old session");
     }
 
-    registry.reload().unwrap();
+    registry
+        .reload()
+        .expect("reload registry after soft delete");
     assert_eq!(registry.list().len(), 1);
 
     executor
         .restore("session-2026-01-01T10-00-oldold22.json", false)
-        .unwrap();
-    registry.reload().unwrap();
+        .expect("restore old session");
+    registry.reload().expect("reload registry after restore");
     assert_eq!(registry.list().len(), 2);
 }
 
@@ -54,13 +58,17 @@ fn test_stats_and_grep() {
         "Find me: KeywordX",
         0,
     );
-    registry.reload().unwrap();
+    registry.reload().expect("reload registry for grep");
 
     // Grep
     let matches: Vec<_> = registry
         .list()
         .iter()
-        .filter(|s| fs::read_to_string(&s.path).unwrap().contains("KeywordX"))
+        .filter(|s| {
+            fs::read_to_string(&s.path)
+                .expect("read session content")
+                .contains("KeywordX")
+        })
         .collect();
     assert_eq!(matches.len(), 1);
 
@@ -80,10 +88,11 @@ fn test_export_logic() {
         "Markdown test",
         0,
     );
-    registry.reload().unwrap();
+    registry.reload().expect("reload registry for export");
 
     let session = &registry.list()[0];
-    let md = export::session_to_markdown(session, &ctx.config.preview).unwrap();
+    let md = export::session_to_markdown(session, &ctx.config.preview)
+        .expect("export session to markdown");
 
     assert!(md.contains("## USER"));
     assert!(md.contains("Markdown test"));

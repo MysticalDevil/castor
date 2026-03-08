@@ -49,7 +49,12 @@ fn render_tree(app: &mut App, frame: &mut Frame, area: Rect) {
                         .get(id)
                         .map(|v| v.len())
                         .unwrap_or(0usize);
-                    let group_label = format!("▸ {} ({})", id, session_count);
+                    let marker = if app.is_group_collapsed(id) {
+                        "▸"
+                    } else {
+                        "▾"
+                    };
+                    let group_label = format!("{} {} ({})", marker, id, session_count);
                     let group_label = truncate_with_ellipsis(&group_label, line_budget);
                     ListItem::new(group_label).style(
                         Style::default()
@@ -302,6 +307,12 @@ fn render_keys_bar(app: &App, frame: &mut Frame, area: Rect) {
                 Span::styled("j/k ", Style::default().fg(theme.title)),
                 Span::styled("navigate ", Style::default().fg(theme.key_desc)),
                 Span::raw("| "),
+                Span::styled("h/l ", Style::default().fg(theme.title)),
+                Span::styled("fold/unfold ", Style::default().fg(theme.key_desc)),
+                Span::raw("| "),
+                Span::styled("space ", Style::default().fg(theme.title)),
+                Span::styled("toggle group ", Style::default().fg(theme.key_desc)),
+                Span::raw("| "),
                 Span::styled("g ", Style::default().fg(theme.title)),
                 Span::styled("group ", Style::default().fg(theme.key_desc)),
                 Span::raw("| "),
@@ -339,4 +350,100 @@ fn render_keys_bar(app: &App, frame: &mut Frame, area: Rect) {
             .border_style(Style::default().fg(theme.border)),
     );
     frame.render_widget(bar, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Config, PreviewConfig};
+    use crate::core::{Registry, Session};
+    use crate::ops::Executor;
+    use ratatui::{Terminal, backend::TestBackend};
+    use std::fs;
+    use std::sync::Arc;
+    use tempfile::tempdir;
+
+    fn make_app_with_one_session() -> App {
+        let tmp = tempdir().expect("create tempdir");
+        let project_path = tmp.path().join("proj1/chats");
+        fs::create_dir_all(&project_path).expect("create project chats dir");
+        let s_path = project_path.join("session-2026-03-08T12-00-aaaa1111.json");
+        fs::write(
+            &s_path,
+            r#"{"messages":[{"type":"user","content":"hello"},{"type":"assistant","content":"world"}]}"#,
+        )
+        .expect("write session fixture");
+
+        let mut registry = Registry::new(tmp.path(), &tmp.path().join("cache.json"));
+        registry.reload().expect("reload registry");
+
+        let sessions = registry.sessions.clone();
+        registry.sessions.clear();
+        registry.session_indices.clear();
+
+        let executor = Executor::new(Config {
+            gemini_sessions_path: tmp.path().to_path_buf(),
+            trash_path: tmp.path().join("trash"),
+            audit_path: tmp.path().join("audit"),
+            cache_path: tmp.path().join("cache").join("metadata.json"),
+            dry_run_by_default: true,
+            icon_set: crate::utils::icons::IconSet::Ascii,
+            theme: crate::tui::theme::ThemeConfig::default(),
+            preview: PreviewConfig::default(),
+        });
+        let mut app = App::new(registry, executor);
+        app.add_sessions(sessions, true).expect("add sessions");
+        app
+    }
+
+    #[test]
+    fn test_render_with_placeholder() {
+        let mut app = make_app_with_one_session();
+        app.list_state.select(None);
+        app.message = Some("hello".to_string());
+
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("create terminal");
+        terminal
+            .draw(|f| render(&mut app, f))
+            .expect("render placeholder");
+    }
+
+    #[test]
+    fn test_render_with_selected_session_and_preview() {
+        let mut app = make_app_with_one_session();
+        app.list_state.select(Some(1));
+        app.current_preview = Some("## USER\nhi\n\n## GEMINI\nhello".to_string());
+        app.last_selected_id = app
+            .get_selected_session()
+            .map(|s| s.id.clone())
+            .or_else(|| Some("fallback".to_string()));
+
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("create terminal");
+        terminal
+            .draw(|f| render(&mut app, f))
+            .expect("render with selected session");
+    }
+
+    #[test]
+    fn test_render_tree_with_collapsed_group() {
+        let mut app = make_app_with_one_session();
+        app.list_state.select(Some(0));
+        app.toggle_selected_group();
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("create terminal");
+        terminal
+            .draw(|f| render(&mut app, f))
+            .expect("render collapsed group");
+    }
+
+    #[test]
+    fn test_truncate_with_ellipsis() {
+        assert_eq!(truncate_with_ellipsis("abc", 5), "abc");
+        assert_eq!(truncate_with_ellipsis("abcdef", 4), "abc…");
+        assert_eq!(truncate_with_ellipsis("abcdef", 1), "…");
+        assert_eq!(truncate_with_ellipsis("abcdef", 0), "");
+    }
 }

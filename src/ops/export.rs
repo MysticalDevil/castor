@@ -2,6 +2,8 @@ use crate::config::PreviewConfig;
 use crate::core::Session;
 use crate::error::Result;
 use regex::Regex;
+use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer};
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -118,36 +120,82 @@ fn build_markdown_from_json_file(
 ) -> Result<(String, usize, bool)> {
     let file = std::fs::File::open(&session.path)?;
     let reader = BufReader::new(file);
-    let json: serde_json::Value = serde_json::from_reader(reader)?;
-    let mut markdown = String::new();
-    let mut count = 0usize;
-    let mut used_chars = 0usize;
-    let mut truncated = false;
+    let mut deserializer = serde_json::Deserializer::from_reader(reader);
+    let state = PreviewRootSeed { limit, char_budget }.deserialize(&mut deserializer)?;
+    Ok((state.markdown, state.count, state.truncated))
+}
 
-    if let Some(messages) = json.get("messages").and_then(|m| m.as_array()) {
-        let mut last_role = String::new();
-        for msg in messages {
-            if count >= limit || used_chars >= char_budget {
-                truncated = true;
-                break;
-            }
+#[derive(Default)]
+struct PreviewBuildState {
+    markdown: String,
+    count: usize,
+    used_chars: usize,
+    truncated: bool,
+    last_role: String,
+}
 
-            let role = msg
-                .get("type")
-                .and_then(|t| t.as_str())
-                .unwrap_or("unknown")
-                .to_uppercase();
-            let display_role = if role == "ASSISTANT" {
-                "GEMINI".to_string()
-            } else {
-                role
-            };
+impl PreviewBuildState {
+    fn push_message(&mut self, role: String, text: String, char_budget: usize, limit: usize) {
+        if self.count >= limit || self.used_chars >= char_budget {
+            self.truncated = true;
+            return;
+        }
 
-            let mut text = String::new();
-            let content_val = msg.get("content").unwrap_or(&serde_json::Value::Null);
-            if let Some(t) = content_val.as_str() {
-                text = t.to_string();
-            } else if let Some(arr) = content_val.as_array() {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+
+        let available = char_budget.saturating_sub(self.used_chars);
+        if available == 0 {
+            self.truncated = true;
+            return;
+        }
+
+        let clipped_text = if trimmed.chars().count() > available {
+            let mut clipped = trimmed.chars().take(available).collect::<String>();
+            clipped.push_str("…");
+            self.truncated = true;
+            clipped
+        } else {
+            trimmed.to_string()
+        };
+
+        self.used_chars += clipped_text.chars().count();
+        self.count += 1;
+
+        if role == self.last_role {
+            self.markdown.push_str(&format!("{}\n\n", clipped_text));
+        } else {
+            self.markdown
+                .push_str(&format!("## {}\n{}\n\n", role, clipped_text));
+            self.last_role = role;
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct MessageItem {
+    #[serde(default, rename = "type")]
+    role: Option<String>,
+    #[serde(default)]
+    content: Option<serde_json::Value>,
+}
+
+impl MessageItem {
+    fn into_preview_parts(self) -> Option<(String, String)> {
+        let role_raw = self.role.unwrap_or_else(|| "unknown".to_string());
+        let display_role = match role_raw.as_str() {
+            "user" => "USER",
+            "assistant" | "gemini" => "GEMINI",
+            other => other,
+        }
+        .to_uppercase();
+
+        let mut text = String::new();
+        match self.content {
+            Some(serde_json::Value::String(s)) => text = s,
+            Some(serde_json::Value::Array(arr)) => {
                 for item in arr {
                     if let Some(t) = item.get("text").and_then(|v| v.as_str()) {
                         text.push_str(t);
@@ -155,40 +203,123 @@ fn build_markdown_from_json_file(
                     }
                 }
             }
-
-            let trimmed = text.trim();
-            if trimmed.is_empty() {
-                continue;
+            Some(serde_json::Value::Object(map)) => {
+                if let Some(t) = map.get("text").and_then(|v| v.as_str()) {
+                    text = t.to_string();
+                }
             }
-
-            let available = char_budget.saturating_sub(used_chars);
-            if available == 0 {
-                truncated = true;
-                break;
-            }
-
-            let clipped_text = if trimmed.chars().count() > available {
-                let mut clipped = trimmed.chars().take(available).collect::<String>();
-                clipped.push_str("…");
-                truncated = true;
-                clipped
-            } else {
-                trimmed.to_string()
-            };
-
-            used_chars += clipped_text.chars().count();
-            count += 1;
-
-            if display_role == last_role {
-                markdown.push_str(&format!("{}\n\n", clipped_text));
-            } else {
-                markdown.push_str(&format!("## {}\n{}\n\n", display_role, clipped_text));
-                last_role = display_role;
-            }
+            _ => {}
+        }
+        if text.trim().is_empty() {
+            None
+        } else {
+            Some((display_role, text))
         }
     }
+}
 
-    Ok((markdown, count, truncated))
+struct MessagesSeed<'a> {
+    state: &'a mut PreviewBuildState,
+    limit: usize,
+    char_budget: usize,
+}
+
+impl<'de, 'a> DeserializeSeed<'de> for MessagesSeed<'a> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> std::result::Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_seq(MessagesVisitor {
+            state: self.state,
+            limit: self.limit,
+            char_budget: self.char_budget,
+        })
+    }
+}
+
+struct MessagesVisitor<'a> {
+    state: &'a mut PreviewBuildState,
+    limit: usize,
+    char_budget: usize,
+}
+
+impl<'de, 'a> Visitor<'de> for MessagesVisitor<'a> {
+    type Value = ();
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a session messages array")
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        while let Some(item) = seq.next_element::<MessageItem>()? {
+            if let Some((role, text)) = item.into_preview_parts() {
+                self.state
+                    .push_message(role, text, self.char_budget, self.limit);
+            }
+            if self.state.count >= self.limit || self.state.used_chars >= self.char_budget {
+                self.state.truncated = true;
+                while seq.next_element::<IgnoredAny>()?.is_some() {}
+                break;
+            }
+        }
+        Ok(())
+    }
+}
+
+struct PreviewRootSeed {
+    limit: usize,
+    char_budget: usize,
+}
+
+impl<'de> DeserializeSeed<'de> for PreviewRootSeed {
+    type Value = PreviewBuildState;
+
+    fn deserialize<D>(self, deserializer: D) -> std::result::Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_map(PreviewRootVisitor {
+            limit: self.limit,
+            char_budget: self.char_budget,
+        })
+    }
+}
+
+struct PreviewRootVisitor {
+    limit: usize,
+    char_budget: usize,
+}
+
+impl<'de> Visitor<'de> for PreviewRootVisitor {
+    type Value = PreviewBuildState;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a session json object")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut state = PreviewBuildState::default();
+        while let Some(key) = map.next_key::<String>()? {
+            if key == "messages" {
+                map.next_value_seed(MessagesSeed {
+                    state: &mut state,
+                    limit: self.limit,
+                    char_budget: self.char_budget,
+                })?;
+            } else {
+                map.next_value::<IgnoredAny>()?;
+            }
+        }
+        Ok(state)
+    }
 }
 
 fn read_window_from_start(
@@ -335,10 +466,10 @@ mod tests {
 
     #[test]
     fn test_markdown_generation_merging() {
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("create tempdir");
         let path = tmp.path().join("s.json");
         let data = r#"{"messages":[{"type":"user","content":"hello"},{"type":"assistant","content":"world"}]}"#;
-        fs::write(&path, data).unwrap();
+        fs::write(&path, data).expect("write session json");
 
         let session = Session {
             id: "test".into(),
@@ -354,7 +485,8 @@ mod tests {
             validation_notes: Vec::new(),
         };
 
-        let md = session_to_markdown_limited(&session, 10, &PreviewConfig::default()).unwrap();
+        let md = session_to_markdown_limited(&session, 10, &PreviewConfig::default())
+            .expect("generate markdown preview");
         assert!(md.contains("USER"));
         assert!(md.contains("hello"));
         assert!(md.contains("GEMINI"));
@@ -363,7 +495,7 @@ mod tests {
 
     #[test]
     fn test_large_file_uses_tail_preview_fallback() {
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("create tempdir");
         let path = tmp.path().join("large-tail-preview.json");
 
         // Create a large file where early bytes don't contain message blocks,
@@ -371,7 +503,7 @@ mod tests {
         let mut data = "x".repeat((PreviewConfig::default().head_bytes + 128) as usize);
         data.push_str(r#"{"type":"user","content":"tail hello"}"#);
         data.push_str(r#"{"type":"assistant","content":"tail world"}"#);
-        fs::write(&path, data.as_bytes()).unwrap();
+        fs::write(&path, data.as_bytes()).expect("write large tail preview fixture");
 
         let session = Session {
             id: "large-tail".into(),
@@ -387,7 +519,8 @@ mod tests {
             validation_notes: Vec::new(),
         };
 
-        let md = session_to_markdown_limited(&session, 10, &PreviewConfig::default()).unwrap();
+        let md = session_to_markdown_limited(&session, 10, &PreviewConfig::default())
+            .expect("generate markdown from tail preview");
         assert!(md.contains("Preview from recent messages"));
         assert!(md.contains("tail hello"));
         assert!(md.contains("tail world"));
@@ -395,10 +528,10 @@ mod tests {
 
     #[test]
     fn test_deep_preview_truncated_by_char_budget() {
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("create tempdir");
         let path = tmp.path().join("deep.json");
         let data = r#"{"messages":[{"type":"user","content":"hello"},{"type":"assistant","content":"world world world"}]}"#;
-        fs::write(&path, data).unwrap();
+        fs::write(&path, data).expect("write deep preview fixture");
 
         let session = Session {
             id: "deep".into(),
@@ -418,7 +551,8 @@ mod tests {
             deep_preview_char_budget: 8,
             ..PreviewConfig::default()
         };
-        let md = session_to_markdown_deep_limited(&session, 20, &preview).unwrap();
+        let md = session_to_markdown_deep_limited(&session, 20, &preview)
+            .expect("generate deep preview");
         assert!(md.contains("Deep preview"));
         assert!(md.contains("truncated"));
     }

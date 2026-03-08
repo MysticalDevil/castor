@@ -56,6 +56,10 @@ stress-cli: gen-stress-data
 stress-tui: gen-stress-data
     cargo run -- --config test_config.json tui
 
+# Repeatable perf benchmarks (ignored tests)
+perf-bench:
+    cargo test --test perf_bench -- --ignored --nocapture
+
 # Main Quality Gate
 check:
     cargo fmt --all -- --check

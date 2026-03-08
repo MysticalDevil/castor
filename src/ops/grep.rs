@@ -38,13 +38,13 @@ mod tests {
 
     #[test]
     fn test_search_sessions() {
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("create tempdir");
         let p1 = tmp.path().join("s1.json");
         fs::write(
             &p1,
             r#"{"messages": [{"type":"user","content":"Rust performance"}]}"#,
         )
-        .unwrap();
+        .expect("write grep test session");
 
         let s1 = Arc::new(Session {
             id: "s1".into(),
@@ -60,10 +60,12 @@ mod tests {
             validation_notes: Vec::new(),
         });
 
-        let results = search_sessions(&[s1.clone()], "Rust", false).unwrap();
+        let results =
+            search_sessions(&[s1.clone()], "Rust", false).expect("search session for Rust");
         assert_eq!(results.len(), 1);
 
-        let results_none = search_sessions(&[s1], "Python", false).unwrap();
+        let results_none =
+            search_sessions(&[s1], "Python", false).expect("search session for Python");
         assert_eq!(results_none.len(), 0);
     }
 }

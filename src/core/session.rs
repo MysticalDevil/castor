@@ -157,11 +157,11 @@ mod tests {
 
     #[test]
     fn test_lazy_loading() {
-        let tmp = tempdir().unwrap();
+        let tmp = tempdir().expect("create tempdir");
         let path = tmp.path().join("session-2026-03-08T12-00-abcdef01.json");
-        fs::write(&path, "{}").unwrap();
+        fs::write(&path, "{}").expect("write lazy loading fixture");
 
-        let s = Session::from_path(&path, "p".into(), None).unwrap();
+        let s = Session::from_path(&path, "p".into(), None).expect("create session from path");
         assert_eq!(s.display_id, "abcdef01");
         assert_eq!(s.health, SessionHealth::Unknown);
     }

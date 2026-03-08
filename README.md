@@ -39,6 +39,7 @@ cargo build --release
 castor tui
 ```
 - **Navigation**: Use `j/k` or arrow keys to move through the tree.
+- **Folding**: Use `h/l` (or Left/Right) to fold/unfold groups, `Space` to toggle.
 - **Grouping**: Press `g` to toggle between Host and Month grouping.
 - **Actions**: Press `d` to delete (moves to trash), `r` to reload.
 - **Preview**: Press `p` to trigger deep preview for the selected session.
@@ -57,6 +58,7 @@ Use `just` to run common tasks:
 - `just test`: Run all unit and integration tests.
 - `just check`: Run the full quality gate (fmt, clippy, test, coverage).
 - `just test-tui`: Generate a rich test dataset and launch the TUI.
+- `just perf-bench`: Run repeatable performance benchmarks (`1k/5k/10k` reload tests).
 
 ## 📄 License
 
