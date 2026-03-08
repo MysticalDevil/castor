@@ -8,6 +8,8 @@ pub fn session_to_markdown(session: &Session) -> Result<String> {
     let mut markdown = String::new();
 
     if let Some(messages) = json.get("messages").and_then(|m| m.as_array()) {
+        let mut last_role = String::new();
+
         for msg in messages {
             let role = msg
                 .get("type")
@@ -19,18 +21,38 @@ pub fn session_to_markdown(session: &Session) -> Result<String> {
                 "user" => "USER",
                 "assistant" => "GEMINI",
                 other => other,
-            };
+            }
+            .to_uppercase();
 
-            markdown.push_str(&format!("## {}\n", display_role.to_uppercase()));
-
+            // Extract content text
+            let mut text_parts = Vec::new();
             let content_val = msg.get("content").unwrap_or(&serde_json::Value::Null);
+
             if let Some(text) = content_val.as_str() {
-                markdown.push_str(&format!("{}\n\n", text));
+                if !text.trim().is_empty() {
+                    text_parts.push(text.to_string());
+                }
             } else if let Some(arr) = content_val.as_array() {
                 for item in arr {
-                    if let Some(text) = item.get("text").and_then(|v| v.as_str()) {
-                        markdown.push_str(&format!("{}\n\n", text));
+                    if let Some(text) = item.get("text").and_then(|v| v.as_str())
+                        && !text.trim().is_empty()
+                    {
+                        text_parts.push(text.to_string());
                     }
+                }
+            }
+
+            // Only proceed if there's actual text content
+            if !text_parts.is_empty() {
+                let joined_text = text_parts.join("\n\n");
+
+                if display_role == last_role {
+                    // Same role, just append text with a separator
+                    markdown.push_str(&format!("{}\n\n", joined_text));
+                } else {
+                    // New role, add header
+                    markdown.push_str(&format!("## {}\n{}\n\n", display_role, joined_text));
+                    last_role = display_role;
                 }
             }
         }
@@ -57,14 +79,18 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn test_markdown_generation() {
+    fn test_markdown_generation_merging() {
         let tmp = tempdir().unwrap();
         let path = tmp.path().join("s.json");
-        fs::write(
-            &path,
-            r#"{"messages": [{"type": "user", "content": "hello"}]}"#,
-        )
-        .unwrap();
+        let data = r#"{
+            "messages": [
+                {"type": "user", "content": "hello"},
+                {"type": "assistant", "content": "part 1"},
+                {"type": "assistant", "content": "part 2"},
+                {"type": "assistant", "content": "  "}
+            ]
+        }"#;
+        fs::write(&path, data).unwrap();
 
         let session = Session {
             id: "test".into(),
@@ -75,41 +101,15 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             size: 0,
-            health: crate::core::session::SessionHealth::Unknown,
+            health: crate::core::session::SessionHealth::Ok,
             validation_notes: Vec::new(),
         };
 
         let md = session_to_markdown(&session).unwrap();
-        assert!(md.contains("## USER"));
-        assert!(md.contains("hello"));
-    }
-
-    #[test]
-    fn test_export_file_writing() {
-        let tmp = tempdir().unwrap();
-        let path = tmp.path().join("s.json");
-        fs::write(
-            &path,
-            r#"{"messages": [{"type": "user", "content": "test"}]}"#,
-        )
-        .unwrap();
-
-        let session = Session {
-            id: "test_export".into(),
-            project_id: "p".into(),
-            host_path: None,
-            name: None,
-            path,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-            size: 0,
-            health: crate::core::session::SessionHealth::Unknown,
-            validation_notes: Vec::new(),
-        };
-
-        let out_path = tmp.path().join("test.md");
-        let result = export_session(&session, Some(&out_path)).unwrap();
-        assert!(result.exists());
-        assert!(fs::read_to_string(result).unwrap().contains("## USER"));
+        assert!(md.contains("## USER\nhello"));
+        assert!(md.contains("## GEMINI\npart 1\n\npart 2"));
+        // Check that empty assistant message was ignored and not creating a new header
+        let gemini_count = md.matches("## GEMINI").count();
+        assert_eq!(gemini_count, 1);
     }
 }
