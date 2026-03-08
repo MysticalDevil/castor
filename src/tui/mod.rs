@@ -1,5 +1,6 @@
 pub mod app;
 pub mod event;
+pub mod theme;
 pub mod ui;
 pub mod widgets;
 
@@ -15,6 +16,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
 use std::sync::mpsc;
 use std::thread;
+pub use theme::{Theme, ThemeConfig};
 
 pub enum TuiEvent {
     Input(crossterm::event::KeyEvent),
@@ -24,12 +26,14 @@ pub enum TuiEvent {
 }
 
 pub fn run(registry: Registry, executor: Executor) -> Result<()> {
+    // setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
+    // Setup communication channels
     let (tx, rx) = mpsc::channel();
 
     // 1. Initial background scan
@@ -54,10 +58,10 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
         }
     });
 
+    // create app
     let mut app = App::new(registry, executor);
     app.message = Some("Scanning sessions...".to_string());
 
-    // Debounce timer for preview
     let mut last_input_time = std::time::Instant::now();
     let mut preview_triggered = true;
 
@@ -69,7 +73,7 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
                 app.registry = new_registry;
                 app.reload()?;
                 app.message = None;
-                preview_triggered = false; // Allow trigger for first item
+                preview_triggered = false;
             }
             Ok(TuiEvent::PreviewLoaded { id, content }) => {
                 if app.last_selected_id.as_ref() == Some(&id) {
@@ -86,7 +90,6 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
                 }
             }
             Ok(TuiEvent::Tick) => {
-                // Debounce: only trigger preview if 100ms passed since last input
                 if !preview_triggered
                     && last_input_time.elapsed() > std::time::Duration::from_millis(100)
                     && let Some(s) = app.get_selected_session()
@@ -103,6 +106,7 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
         }
     }
 
+    // restore terminal
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen,)?;
     terminal.show_cursor()?;
