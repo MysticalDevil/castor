@@ -15,7 +15,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(0),
-            Constraint::Length(1), // Keys bar
+            Constraint::Length(3), // Keys bar with borders
         ])
         .split(frame.area());
 
@@ -229,28 +229,47 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
 }
 
 fn render_keys_bar(app: &App, frame: &mut Frame, area: Rect) {
-    let keys = match app.input_mode {
-        InputMode::Normal => vec![
-            " Q ".black().on_cyan(),
-            " Quit ".white().on_dark_gray(),
-            " J/K ".black().on_cyan(),
-            " Navigate ".white().on_dark_gray(),
-            " D ".black().on_cyan(),
-            " Delete ".white().on_dark_gray(),
-            " R ".black().on_cyan(),
-            " Reload ".white().on_dark_gray(),
-            " Enter ".black().on_cyan(),
-            " Select ".white().on_dark_gray(),
-        ],
-        InputMode::ConfirmDelete => vec![
-            " CONFIRM DELETE? ".black().on_red().bold(),
-            " Y ".black().on_green(),
-            " Yes ".white().on_dark_gray(),
-            " N ".black().on_yellow(),
-            " No ".white().on_dark_gray(),
-        ],
-    };
+    let mut spans = vec![Span::styled(
+        "[KEYS] ",
+        Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::BOLD),
+    )];
 
-    let bar = Paragraph::new(Line::from(keys));
+    match app.input_mode {
+        InputMode::Normal => {
+            spans.extend(vec![
+                Span::styled("q ", Style::default().fg(Color::Cyan)),
+                Span::styled("quit ", Style::default().fg(Color::DarkGray)),
+                Span::raw("| "),
+                Span::styled("j/k ", Style::default().fg(Color::Cyan)),
+                Span::styled("navigate ", Style::default().fg(Color::DarkGray)),
+                Span::raw("| "),
+                Span::styled("d ", Style::default().fg(Color::Cyan)),
+                Span::styled("delete ", Style::default().fg(Color::DarkGray)),
+                Span::raw("| "),
+                Span::styled("r ", Style::default().fg(Color::Cyan)),
+                Span::styled("reload ", Style::default().fg(Color::DarkGray)),
+                Span::raw("| "),
+                Span::styled("enter ", Style::default().fg(Color::Cyan)),
+                Span::styled("select ", Style::default().fg(Color::DarkGray)),
+            ]);
+        }
+        InputMode::ConfirmDelete => {
+            spans.extend(vec![
+                Span::styled(
+                    "CONFIRM DELETE? ",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("y ", Style::default().fg(Color::Green)),
+                Span::styled("yes ", Style::default().fg(Color::DarkGray)),
+                Span::raw("| "),
+                Span::styled("n ", Style::default().fg(Color::Yellow)),
+                Span::styled("no ", Style::default().fg(Color::DarkGray)),
+            ]);
+        }
+    }
+
+    let bar = Paragraph::new(Line::from(spans)).block(Block::default().borders(Borders::ALL));
     frame.render_widget(bar, area);
 }
