@@ -123,6 +123,7 @@ The repository includes a GitHub Actions workflow at `.github/workflows/ci.yml` 
 ## Releases
 
 - Latest stable tag is `v0.1.1`.
+- Release notes: [CHANGELOG.md](CHANGELOG.md)
 
 ## License
 
