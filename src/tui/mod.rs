@@ -35,7 +35,7 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
 
     let (tx, rx) = mpsc::channel();
 
-    // 1. IMPROVED: Streaming background scan
+    // 1. Streaming background scan
     let tx_scan = tx.clone();
     let base_path = registry.scanner.base_path.clone();
     let cache_path = registry.cache_path.clone();
@@ -66,19 +66,23 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
                         for chat_entry in chats.flatten() {
                             let path = chat_entry.path();
                             if path.extension().is_some_and(|ext| ext == "json")
-                                && let Ok(mut s) = crate::core::Session::from_path(
+                                && let Ok(s) = crate::core::Session::from_path(
                                     &path,
                                     project_id.clone(),
                                     host_path.clone(),
                                 )
                             {
-                                if let Some(entry) = inner_registry.cache.get(&s.path, s.updated_at)
+                                let mut s_arc = Arc::new(s);
+                                // Hit cache if possible
+                                if let Some(entry) =
+                                    inner_registry.cache.get(&s_arc.path, s_arc.updated_at)
+                                    && let Some(s_mut) = Arc::get_mut(&mut s_arc)
                                 {
-                                    s.health = entry.health;
-                                    s.name = entry.name;
-                                    s.validation_notes = entry.notes;
+                                    s_mut.health = entry.health;
+                                    s_mut.name = entry.name;
+                                    s_mut.validation_notes = entry.notes;
                                 }
-                                batch.push(Arc::new(s));
+                                batch.push(s_arc);
                                 if batch.len() >= 20 {
                                     let _ = tx_scan
                                         .send(TuiEvent::PartialScan(std::mem::take(&mut batch)));
@@ -95,7 +99,22 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
         let _ = tx_scan.send(TuiEvent::ScanComplete);
     });
 
-    // 2. Input polling thread
+    // 2. CONSTANT WORKER: Dedicated Preview Thread
+    let (tx_preview_worker, rx_preview_worker) =
+        mpsc::channel::<(Arc<crate::core::Session>, mpsc::Sender<TuiEvent>)>();
+    thread::spawn(move || {
+        while let Ok((session, tx_out)) = rx_preview_worker.recv() {
+            let markdown = crate::ops::export::session_to_markdown_limited(&session, 20)
+                .unwrap_or_else(|_| "Error loading preview".to_string());
+
+            let _ = tx_out.send(TuiEvent::PreviewLoaded {
+                id: session.id.clone(),
+                content: markdown,
+            });
+        }
+    });
+
+    // 3. Input polling thread
     let tx_input = tx.clone();
     thread::spawn(move || {
         loop {
@@ -108,7 +127,6 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
         }
     });
 
-    // create app
     let mut app = App::new(registry, executor);
     app.message = Some("Streaming sessions...".to_string());
 
@@ -152,7 +170,7 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
                     && last_input_time.elapsed() > std::time::Duration::from_millis(100)
                     && let Some(s) = app.get_selected_session()
                 {
-                    trigger_async_preview(s, tx.clone());
+                    let _ = tx_preview_worker.send((s, tx.clone()));
                     preview_triggered = true;
                 }
             }
@@ -169,16 +187,4 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
     terminal.show_cursor()?;
 
     Ok(())
-}
-
-fn trigger_async_preview(session: Arc<crate::core::Session>, tx: mpsc::Sender<TuiEvent>) {
-    thread::spawn(move || {
-        let markdown = crate::ops::export::session_to_markdown_limited(&session, 20)
-            .unwrap_or_else(|_| "Error loading preview".to_string());
-
-        let _ = tx.send(TuiEvent::PreviewLoaded {
-            id: session.id.clone(),
-            content: markdown,
-        });
-    });
 }

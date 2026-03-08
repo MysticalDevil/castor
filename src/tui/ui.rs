@@ -35,7 +35,6 @@ fn render_tree(app: &mut App, frame: &mut Frame, area: Rect) {
     let theme = app.executor.config.theme.get_theme();
     let icons = Icons::get(app.executor.config.icon_set);
 
-    // Performance: Use cached items if available
     let items = if let Some(cached) = &app.items_cache {
         cached.clone()
     } else {
@@ -54,8 +53,8 @@ fn render_tree(app: &mut App, frame: &mut Frame, area: Rect) {
                             .add_modifier(Modifier::BOLD),
                     )
                 }
-                Selection::Session(id) => {
-                    let session = app.registry.find_by_id(id).unwrap();
+                Selection::SessionIndex(idx) => {
+                    let session = &app.registry.sessions[*idx];
                     let health_symbol = match session.health {
                         SessionHealth::Unknown => Span::raw(icons.unknown).fg(theme.key_desc),
                         SessionHealth::Ok => Span::raw(icons.ok).green(),
@@ -63,16 +62,11 @@ fn render_tree(app: &mut App, frame: &mut Frame, area: Rect) {
                         SessionHealth::Error => Span::raw(icons.error).red(),
                         SessionHealth::Risk => Span::raw(icons.risk).magenta(),
                     };
-                    let display_id = id
-                        .strip_suffix(".json")
-                        .unwrap_or(id)
-                        .split('-')
-                        .next_back()
-                        .unwrap_or(id);
+
                     ListItem::new(Line::from(vec![
                         Span::raw(format!("  {} ", icons.chat)),
                         health_symbol,
-                        Span::raw(format!(" {}", display_id)),
+                        Span::raw(format!(" {}", session.display_id)), // USE PRE-CALCULATED ID
                     ]))
                 }
             })
@@ -117,7 +111,6 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
         .split(area);
 
     if let Some(session) = app.get_selected_session() {
-        // 1. File Status Panel
         let home = std::env::var("HOME").ok();
         let host_display = session
             .host_path
@@ -205,15 +198,12 @@ fn render_details(app: &App, frame: &mut Frame, area: Rect) {
         );
         frame.render_widget(status_block, details_layout[0]);
 
-        // 2. Conversation Preview Panel
         let preview_content = app
             .current_preview
             .as_deref()
             .unwrap_or("Loading preview...");
-
         let mut text = tui_markdown::from_str(preview_content);
 
-        // Apply theme colors to role headers
         for line in &mut text.lines {
             let is_user = line.spans.iter().any(|s| s.content.contains("USER"));
             let is_gemini = line.spans.iter().any(|s| s.content.contains("GEMINI"));

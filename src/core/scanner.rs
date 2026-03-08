@@ -55,8 +55,17 @@ impl Scanner {
                                     .unwrap_or("unknown")
                                     .to_string();
 
+                                let display_id = id
+                                    .strip_suffix(".json")
+                                    .unwrap_or(&id)
+                                    .split('-')
+                                    .next_back()
+                                    .unwrap_or(&id)
+                                    .to_string();
+
                                 sessions.push(Session {
                                     id,
+                                    display_id,
                                     project_id: project_id.clone(),
                                     host_path: host_path.clone(),
                                     name: None,

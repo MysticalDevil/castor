@@ -20,14 +20,14 @@ pub enum GroupingMode {
 #[derive(Clone, PartialEq, Debug)]
 pub enum Selection {
     Group(String),
-    Session(String), // Store ID for O(1) registry lookup
+    SessionIndex(usize), // Pure index-based selection
 }
 
 pub struct App {
     pub registry: Registry,
     pub executor: Executor,
     pub groups: Vec<String>,
-    pub sessions_by_group: HashMap<String, Vec<String>>, // Store IDs only
+    pub sessions_by_group: HashMap<String, Vec<usize>>, // Stores INDICES only
     pub flat_items: Vec<Selection>,
     pub list_state: ListState,
     pub input_mode: InputMode,
@@ -65,11 +65,14 @@ impl App {
             GroupingMode::Host => GroupingMode::Month,
             GroupingMode::Month => GroupingMode::Host,
         };
-        // Full regroup using existing registry
-        let sessions = self.registry.sessions.clone();
+
+        // Zero-copy regroup: just clear the indices map and re-group existing sessions
+        self.sessions_by_group.clear();
+        let sessions = self.registry.sessions.clone(); // Clones Arcs only
+
+        // Temporarily clear and re-add without full reload
         self.registry.sessions.clear();
         self.registry.session_indices.clear();
-        self.sessions_by_group.clear();
         self.add_sessions(sessions)
     }
 
@@ -88,15 +91,16 @@ impl App {
                 GroupingMode::Month => s.updated_at.format("%Y-%m").to_string(),
             };
 
-            let id = s.id.clone();
+            let index = self.registry.sessions.len();
+            self.registry.session_indices.insert(s.id.clone(), index);
             self.registry.sessions.push(s);
+
             self.sessions_by_group
                 .entry(group_key)
                 .or_default()
-                .push(id);
+                .push(index);
         }
 
-        self.registry.rebuild_index();
         self.rebuild_tree();
         Ok(())
     }
@@ -112,19 +116,16 @@ impl App {
 
         for group in &self.groups {
             self.flat_items.push(Selection::Group(group.clone()));
-            if let Some(session_ids) = self.sessions_by_group.get(group) {
-                // To sort, we need to look up updated_at
-                let mut sorted_ids = session_ids.clone();
-                sorted_ids.sort_by(|a, b| {
-                    let s_a = self.registry.find_by_id(a);
-                    let s_b = self.registry.find_by_id(b);
-                    match (s_a, s_b) {
-                        (Some(a), Some(b)) => b.updated_at.cmp(&a.updated_at),
-                        _ => std::cmp::Ordering::Equal,
-                    }
+            if let Some(indices) = self.sessions_by_group.get(group) {
+                // Sort indices by updated_at desc
+                let mut sorted_indices = indices.clone();
+                sorted_indices.sort_by(|&a, &b| {
+                    let s_a = &self.registry.sessions[a];
+                    let s_b = &self.registry.sessions[b];
+                    s_b.updated_at.cmp(&s_a.updated_at)
                 });
-                for id in sorted_ids {
-                    self.flat_items.push(Selection::Session(id));
+                for idx in sorted_indices {
+                    self.flat_items.push(Selection::SessionIndex(idx));
                 }
             }
         }
@@ -148,7 +149,7 @@ impl App {
         let mut i = current;
         loop {
             i = (i + 1) % self.flat_items.len();
-            if matches!(self.flat_items[i], Selection::Session(_)) {
+            if matches!(self.flat_items[i], Selection::SessionIndex(_)) {
                 self.list_state.select(Some(i));
                 break;
             }
@@ -171,7 +172,7 @@ impl App {
             } else {
                 i -= 1;
             }
-            if matches!(self.flat_items[i], Selection::Session(_)) {
+            if matches!(self.flat_items[i], Selection::SessionIndex(_)) {
                 self.list_state.select(Some(i));
                 break;
             }
@@ -192,10 +193,9 @@ impl App {
 
     fn update_selection_id(&mut self) {
         let current_id = if let Some(idx) = self.list_state.selected() {
-            if let Some(Selection::Session(id)) = self.flat_items.get(idx) {
-                Some(id.clone())
-            } else {
-                None
+            match &self.flat_items[idx] {
+                Selection::SessionIndex(i) => Some(self.registry.sessions[*i].id.clone()),
+                _ => None,
             }
         } else {
             None
@@ -209,9 +209,9 @@ impl App {
 
     pub fn get_selected_session(&self) -> Option<Arc<Session>> {
         if let Some(idx) = self.list_state.selected()
-            && let Some(Selection::Session(id)) = self.flat_items.get(idx)
+            && let Some(Selection::SessionIndex(i)) = self.flat_items.get(idx)
         {
-            return self.registry.find_by_id(id);
+            return Some(self.registry.sessions[*i].clone());
         }
         None
     }
@@ -250,6 +250,6 @@ mod tests {
         app.add_sessions(vec![session]).unwrap();
 
         assert_eq!(app.flat_items.len(), 2);
-        assert!(matches!(app.flat_items[1], Selection::Session(_)));
+        assert!(matches!(app.flat_items[1], Selection::SessionIndex(_)));
     }
 }

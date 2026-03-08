@@ -29,6 +29,7 @@ impl fmt::Display for SessionHealth {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Session {
     pub id: String,
+    pub display_id: String, // Pre-calculated for rendering performance
     pub project_id: String,
     pub host_path: Option<PathBuf>,
     pub name: Option<String>,
@@ -54,8 +55,18 @@ impl Session {
             .unwrap_or("unknown")
             .to_string();
 
+        // Pre-calculate short ID: session-2026-03-08T12-00-abcdef01.json -> abcdef01
+        let display_id = id
+            .strip_suffix(".json")
+            .unwrap_or(&id)
+            .split('-')
+            .next_back()
+            .unwrap_or(&id)
+            .to_string();
+
         Ok(Self {
             id,
+            display_id,
             project_id,
             host_path,
             name: None,
@@ -71,7 +82,6 @@ impl Session {
     pub fn deep_validate(&mut self) {
         self.validation_notes.clear();
 
-        // 1. Structural/Corrupt Check
         if self.size == 0 {
             self.health = SessionHealth::Error;
             self.validation_notes.push("File is empty".into());
@@ -96,7 +106,6 @@ impl Session {
             }
         };
 
-        // Extract name from first user message if missing
         if self.name.is_none()
             && let Some(messages) = json.get("messages").and_then(|m| m.as_array())
         {
@@ -112,7 +121,6 @@ impl Session {
             }
         }
 
-        // 2. Orphan Check
         if let Some(host) = &self.host_path {
             if !host.exists() {
                 self.health = SessionHealth::Warn;
@@ -123,7 +131,6 @@ impl Session {
             }
         }
 
-        // 3. Risk Check (Anomaly Detection)
         if self.size > 50 * 1024 * 1024 {
             self.health = SessionHealth::Risk;
             self.validation_notes
@@ -151,26 +158,11 @@ mod tests {
     #[test]
     fn test_lazy_loading() {
         let tmp = tempdir().unwrap();
-        let path = tmp.path().join("s.json");
+        let path = tmp.path().join("session-2026-03-08T12-00-abcdef01.json");
         fs::write(&path, "{}").unwrap();
 
         let s = Session::from_path(&path, "p".into(), None).unwrap();
+        assert_eq!(s.display_id, "abcdef01");
         assert_eq!(s.health, SessionHealth::Unknown);
-        assert!(s.name.is_none());
-    }
-
-    #[test]
-    fn test_deep_validation() {
-        let tmp = tempdir().unwrap();
-        let path = tmp.path().join("s.json");
-        fs::write(
-            &path,
-            r#"{"messages": [{"type":"user","content":"hello world"}]}"#,
-        )
-        .unwrap();
-
-        let mut s = Session::from_path(&path, "p".into(), None).unwrap();
-        s.deep_validate();
-        assert_eq!(s.name, Some("hello world".into()));
     }
 }

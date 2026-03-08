@@ -31,6 +31,7 @@ mod tests {
     fn test_stats_calculation() {
         let s = Arc::new(Session {
             id: "s1".into(),
+            display_id: "s1".into(),
             project_id: "p1".into(),
             host_path: None,
             name: None,

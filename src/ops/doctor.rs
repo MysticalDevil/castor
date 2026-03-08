@@ -70,6 +70,7 @@ mod tests {
     fn test_doctor_report_generation() {
         let mut s1 = Session {
             id: "s1".into(),
+            display_id: "s1".into(),
             project_id: "p1".into(),
             host_path: None,
             name: None,

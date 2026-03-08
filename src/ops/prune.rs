@@ -21,6 +21,7 @@ mod tests {
         let now = Utc::now();
         let s1 = Arc::new(Session {
             id: "old".into(),
+            display_id: "old".into(),
             project_id: "p1".into(),
             host_path: None,
             name: None,
@@ -33,6 +34,7 @@ mod tests {
         });
         let s2 = Arc::new(Session {
             id: "new".into(),
+            display_id: "new".into(),
             project_id: "p1".into(),
             host_path: None,
             name: None,

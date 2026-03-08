@@ -115,6 +115,7 @@ mod tests {
         let now = chrono::Utc::now();
         let s = Arc::new(Session {
             id: "abc".into(),
+            display_id: "abc".into(),
             project_id: "proj".into(),
             host_path: None,
             name: None,

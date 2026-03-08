@@ -156,6 +156,7 @@ mod tests {
 
         let session = Session {
             id: "test".into(),
+            display_id: "test".into(),
             project_id: "p".into(),
             host_path: None,
             name: None,
