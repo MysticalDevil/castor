@@ -4,10 +4,11 @@ use crate::core::session::Session;
 use crate::error::Result;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub struct Registry {
-    pub sessions: Vec<Session>,
-    pub session_indices: HashMap<String, usize>, // $O(1)$ lookup map
+    pub sessions: Vec<Arc<Session>>,
+    pub session_indices: HashMap<String, usize>, // O(1) lookup map
     pub scanner: Scanner,
     pub cache: MetadataCache,
     pub cache_path: PathBuf,
@@ -47,7 +48,7 @@ impl Registry {
             }
         }
 
-        self.sessions = new_sessions;
+        self.sessions = new_sessions.into_iter().map(Arc::new).collect();
         self.rebuild_index();
         self.cache.save(&self.cache_path)?;
         Ok(())
@@ -60,29 +61,24 @@ impl Registry {
         }
     }
 
-    pub fn find_by_id(&self, id: &str) -> Option<&Session> {
+    pub fn find_by_id(&self, id: &str) -> Option<Arc<Session>> {
         self.session_indices
             .get(id)
-            .and_then(|&i| self.sessions.get(i))
+            .and_then(|&i| self.sessions.get(i).cloned())
     }
 
-    pub fn find(&self, query: &str) -> Option<&Session> {
-        // Fast path: check ID first
+    pub fn find(&self, query: &str) -> Option<Arc<Session>> {
         if let Some(s) = self.find_by_id(query) {
             return Some(s);
         }
-        // Slow path: check names
         self.sessions
             .iter()
             .find(|s| s.name.as_ref().is_some_and(|n| n == query))
+            .cloned()
     }
 
-    pub fn list(&self) -> &[Session] {
+    pub fn list(&self) -> &[Arc<Session>] {
         &self.sessions
-    }
-
-    pub fn list_mut(&mut self) -> &mut [Session] {
-        &mut self.sessions
     }
 }
 

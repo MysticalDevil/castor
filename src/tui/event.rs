@@ -25,7 +25,7 @@ pub fn handle_key_event(
         },
         InputMode::ConfirmDelete => match key.code {
             KeyCode::Char('y') => {
-                if let Some(session) = app.get_selected_session().cloned() {
+                if let Some(session) = app.get_selected_session() {
                     app.executor.delete_soft(&session, false)?;
                     app.message = Some(format!("Deleted session {}", session.id));
                     app.reload()?;

@@ -6,8 +6,6 @@ use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 static MSG_BLOCK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    // A robust regex to find individual message objects in the JSON stream
-    // Matches: {"type": "...", "content": ...}
     Regex::new(r#"\{"type"\s*:\s*"([^"]+)"\s*,\s*"content"\s*:\s*([^}]+)\}"#).unwrap()
 });
 
@@ -15,13 +13,10 @@ pub fn session_to_markdown(session: &Session) -> Result<String> {
     session_to_markdown_limited(session, usize::MAX)
 }
 
-/// A smarter, non-brute-force version for TUI previews.
-/// It uses regex to extract message chunks from a partial buffer.
 pub fn session_to_markdown_limited(session: &Session, limit: usize) -> Result<String> {
     let file = std::fs::File::open(&session.path)?;
     let mut reader = BufReader::new(file);
 
-    // Dynamic buffer: Start with 512KB, can grow if needed
     let mut preview_buffer_size = 512 * 1024;
     if session.size < preview_buffer_size {
         preview_buffer_size = session.size;
@@ -37,8 +32,6 @@ pub fn session_to_markdown_limited(session: &Session, limit: usize) -> Result<St
     let mut count = 0;
     let re_text = Regex::new(r#""text"\s*:\s*"([^"]+)""#).unwrap();
 
-    // Use regex to find messages instead of full JSON parsing.
-    // This is much faster and immune to structural truncation at the end of the buffer.
     for caps in MSG_BLOCK_REGEX.captures_iter(&content) {
         if count >= limit {
             break;
@@ -54,17 +47,13 @@ pub fn session_to_markdown_limited(session: &Session, limit: usize) -> Result<St
         }
         .to_uppercase();
 
-        // Very simple cleanup of the content value (it might be a string or a complex object)
-        // For preview, we just want the text parts.
         let mut text = String::new();
         if content_raw.starts_with('"') {
-            // It's a simple string
             text = content_raw
                 .trim_matches('"')
                 .replace("\\n", "\n")
                 .to_string();
         } else if content_raw.contains("\"text\"") {
-            // It's an object/array with "text" fields
             for t_cap in re_text.captures_iter(content_raw) {
                 text.push_str(&t_cap[1].replace("\\n", "\n"));
                 text.push('\n');
@@ -83,8 +72,6 @@ pub fn session_to_markdown_limited(session: &Session, limit: usize) -> Result<St
     }
 
     if count == 0 && session.size > 0 {
-        // Fallback: If regex failed but file has size, maybe it's a non-standard layout
-        // Let's try a full parse if the file isn't too huge
         if session.size < 2 * 1024 * 1024 {
             return session_to_markdown_full(session);
         }
@@ -96,7 +83,6 @@ pub fn session_to_markdown_limited(session: &Session, limit: usize) -> Result<St
     Ok(markdown)
 }
 
-/// Fallback for full parsing of smaller files
 fn session_to_markdown_full(session: &Session) -> Result<String> {
     let content = std::fs::read_to_string(&session.path)?;
     let json: serde_json::Value = serde_json::from_str(&content)?;
@@ -165,7 +151,6 @@ mod tests {
     fn test_markdown_generation_merging() {
         let tmp = tempdir().unwrap();
         let path = tmp.path().join("s.json");
-        // Regex is greedy or specific. Let's use simple blocks.
         let data = r#"{"messages":[{"type":"user","content":"hello"},{"type":"assistant","content":"world"}]}"#;
         fs::write(&path, data).unwrap();
 

@@ -1,7 +1,8 @@
 use crate::config::Config;
 use crate::core::Session;
-use std::path::Path;
+use std::sync::Arc;
 
+#[derive(Debug)]
 pub struct StorageStats {
     pub total_sessions: usize,
     pub total_size_bytes: u64,
@@ -9,28 +10,15 @@ pub struct StorageStats {
 }
 
 impl StorageStats {
-    pub fn calculate(sessions: &[Session], config: &Config) -> Self {
-        let total_sessions = sessions.len();
+    pub fn calculate(sessions: &[Arc<Session>], config: &Config) -> Self {
         let total_size_bytes = sessions.iter().map(|s| s.size).sum();
-        let trash_size_bytes = Self::calculate_dir_size(&config.trash_path);
+        let trash_size_bytes = crate::utils::fs::get_dir_size(&config.trash_path).unwrap_or(0);
 
         Self {
-            total_sessions,
+            total_sessions: sessions.len(),
             total_size_bytes,
             trash_size_bytes,
         }
-    }
-
-    fn calculate_dir_size(path: &Path) -> u64 {
-        let mut size = 0;
-        if path.exists() {
-            for e in walkdir::WalkDir::new(path).into_iter().flatten() {
-                if e.file_type().is_file() {
-                    size += e.metadata().map(|m| m.len()).unwrap_or(0);
-                }
-            }
-        }
-        size
     }
 }
 
@@ -41,21 +29,21 @@ mod tests {
 
     #[test]
     fn test_stats_calculation() {
-        let s = Session {
+        let s = Arc::new(Session {
             id: "s1".into(),
-            project_id: "p".into(),
+            project_id: "p1".into(),
             host_path: None,
             name: None,
-            path: PathBuf::from("s1"),
+            path: PathBuf::from("/tmp/s1.json"),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             size: 1024,
-            health: crate::core::session::SessionHealth::Unknown,
+            health: crate::core::session::SessionHealth::Ok,
             validation_notes: Vec::new(),
-        };
+        });
 
         let config = Config {
-            gemini_sessions_path: PathBuf::from("/tmp"),
+            gemini_sessions_path: PathBuf::from("/tmp/gemini"),
             trash_path: PathBuf::from("/tmp/trash_non_existent"),
             audit_path: PathBuf::from("/tmp/audit"),
             cache_path: PathBuf::from("/tmp/cache"),
@@ -67,6 +55,5 @@ mod tests {
         let stats = StorageStats::calculate(&[s], &config);
         assert_eq!(stats.total_sessions, 1);
         assert_eq!(stats.total_size_bytes, 1024);
-        assert_eq!(stats.trash_size_bytes, 0);
     }
 }

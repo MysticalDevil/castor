@@ -1,318 +1,213 @@
-use castor::cli::{Cli, Commands};
-use castor::config::Config;
-use castor::core::Registry;
-use castor::error::Result;
-use castor::ops::{
+mod audit;
+mod cli;
+mod config;
+mod core;
+mod error;
+mod ops;
+mod tui;
+mod utils;
+
+use crate::config::Config;
+use crate::core::Registry;
+use crate::error::Result;
+use crate::ops::{
     doctor::DoctorReport, executor::Executor, export, grep, prune, stats::StorageStats,
 };
-use castor::utils::term::{write_list_header, write_session_row};
 use clap::{CommandFactory, Parser};
-use clap_complete::generate;
-use colored::Colorize;
-use std::collections::HashMap;
-use std::io;
+use cli::{Cli, Commands};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let config = Config::load(cli.config.as_deref())?;
     config.ensure_dirs()?;
 
-    let mut registry = Registry::new(
-        &config.gemini_sessions_path,
-        &config.cache_path.join("metadata.json"),
-    );
     let executor = Executor::new(config);
-    let home_dir = std::env::var("HOME").ok();
-    let stdout = io::stdout();
-    let mut handle = stdout.lock();
+    let mut registry = Registry::new(
+        &executor.config.gemini_sessions_path,
+        &executor.config.cache_path,
+    );
 
-    match cli.command {
-        Some(Commands::Tui) => {
-            castor::tui::run(registry, executor)?;
-        }
-        Some(Commands::List {
-            json,
-            group,
-            page_size,
-        }) => {
-            registry.reload()?;
-            let sessions = registry.list();
+    if let Some(command) = cli.command {
+        match command {
+            Commands::List {
+                group,
+                json,
+                page_size: _,
+            } => {
+                registry.reload()?;
+                let sessions = registry.list();
 
-            if json {
-                println!("{}", serde_json::to_string_pretty(sessions)?);
-            } else if group {
-                let mut groups: HashMap<String, Vec<&castor::core::Session>> = HashMap::new();
-                for s in sessions {
-                    let host = if let Some(path) = &s.host_path {
-                        castor::utils::fs::format_host(path, home_dir.as_deref())
+                if json {
+                    let raw_sessions: Vec<_> = sessions.iter().map(|s| &**s).collect();
+                    println!("{}", serde_json::to_string_pretty(&raw_sessions)?);
+                } else if group {
+                    utils::term::print_sessions_grouped(sessions, &executor.config);
+                } else {
+                    utils::term::print_sessions_table(sessions, &executor.config);
+                }
+            }
+            Commands::Cat { id, raw } => {
+                registry.reload()?;
+                if let Some(session) = registry.find(&id) {
+                    if raw {
+                        println!("{}", session.get_content()?);
                     } else {
-                        s.project_id.clone()
-                    };
-                    groups.entry(host).or_default().push(s);
-                }
-
-                for (host, group_sessions) in groups {
-                    println!("\n{}", host.yellow().bold());
-                    write_list_header(&mut handle)?;
-                    for s in group_sessions {
-                        write_session_row(&mut handle, s, home_dir.as_deref())?;
+                        println!("{}", export::session_to_markdown(&session)?);
                     }
-                }
-            } else if page_size > 0 {
-                let chunks = sessions.chunks(page_size);
-                for (i, chunk) in chunks.enumerate() {
-                    if i > 0 {
-                        println!("\n--- Page {} (Press Enter for next) ---", i + 1);
-                        let mut input = String::new();
-                        std::io::stdin().read_line(&mut input).ok();
-                    }
-                    write_list_header(&mut handle)?;
-                    for s in chunk {
-                        write_session_row(&mut handle, s, home_dir.as_deref())?;
-                    }
-                }
-            } else {
-                write_list_header(&mut handle)?;
-                for s in sessions {
-                    write_session_row(&mut handle, s, home_dir.as_deref())?;
+                } else {
+                    println!("Session {} not found.", id);
                 }
             }
-        }
-        Some(Commands::Cat { id, raw }) => {
-            registry.reload()?;
-            let session = registry.find(&id).ok_or_else(|| {
-                castor::error::CastorError::PathNotFound(std::path::PathBuf::from(id.clone()))
-            })?;
-
-            if raw {
-                println!("{}", std::fs::read_to_string(&session.path)?);
-            } else {
-                println!("{}", export::session_to_markdown(session)?);
+            Commands::Grep {
+                pattern,
+                ignore_case,
+            } => {
+                registry.reload()?;
+                let matches = grep::search_sessions(registry.list(), &pattern, ignore_case)?;
+                utils::term::print_sessions_table(&matches, &executor.config);
             }
-        }
-        Some(Commands::Grep {
-            pattern,
-            ignore_case,
-        }) => {
-            registry.reload()?;
-            let matches = grep::search_sessions(registry.list(), &pattern, ignore_case)?;
-
-            if matches.is_empty() {
-                println!("No sessions found containing '{}'", pattern);
-            } else {
-                println!("Found {} sessions containing '{}':", matches.len(), pattern);
-                write_list_header(&mut handle)?;
-                for s in matches {
-                    write_session_row(&mut handle, s, home_dir.as_deref())?;
+            Commands::Export { id, output } => {
+                registry.reload()?;
+                if let Some(session) = registry.find(&id) {
+                    let path = export::export_session(&session, output.as_deref())?;
+                    println!("Exported session to {:?}", path);
+                } else {
+                    println!("Session {} not found.", id);
                 }
             }
-        }
-        Some(Commands::Export { id, output }) => {
-            registry.reload()?;
-            let session = registry.find(&id).ok_or_else(|| {
-                castor::error::CastorError::PathNotFound(std::path::PathBuf::from(id.clone()))
-            })?;
-
-            let path = export::export_session(session, output.as_deref())?;
-            println!("Session exported to {}", path.display().to_string().green());
-        }
-        Some(Commands::Stats) => {
-            registry.reload()?;
-            let s = StorageStats::calculate(registry.list(), &executor.config);
-
-            println!("{}", "Castor Storage Statistics".cyan().bold());
-            println!("{:<20} {}", "Total Sessions:", s.total_sessions);
-            println!(
-                "{:<20} {:.2} MB",
-                "Total Size:",
-                s.total_size_bytes as f64 / 1024.0 / 1024.0
-            );
-            println!(
-                "{:<20} {:.2} MB",
-                "Trash Size:",
-                s.trash_size_bytes as f64 / 1024.0 / 1024.0
-            );
-        }
-        Some(Commands::ClearTrash { confirm }) => {
-            if !confirm {
+            Commands::Stats => {
+                registry.reload()?;
+                let s = StorageStats::calculate(registry.list(), &executor.config);
+                println!("Sessions: {}", s.total_sessions);
                 println!(
-                    "{}",
-                    "Please provide --confirm to empty the trash.".yellow()
+                    "Total Size: {:.2} MB",
+                    s.total_size_bytes as f64 / 1024.0 / 1024.0
                 );
-                return Ok(());
+                println!(
+                    "Trash Size: {:.2} MB",
+                    s.trash_size_bytes as f64 / 1024.0 / 1024.0
+                );
             }
-            if executor.config.trash_path.exists() {
-                std::fs::remove_dir_all(&executor.config.trash_path)?;
-                std::fs::create_dir_all(&executor.config.trash_path)?;
-                println!("{}", "Trash cleared successfully.".green());
+            Commands::Prune {
+                days,
+                confirm,
+                dry_run,
+                hard,
+            } => {
+                registry.reload()?;
+                let to_prune = prune::find_sessions_to_prune(registry.list(), days);
+
+                if to_prune.is_empty() {
+                    println!("No sessions older than {} days found.", days);
+                    return Ok(());
+                }
+
+                println!("Found {} sessions to prune:", to_prune.len());
+                utils::term::print_sessions_table(&to_prune, &executor.config);
+
+                if confirm {
+                    for session in to_prune {
+                        if hard {
+                            executor.delete_hard(&session, dry_run)?;
+                        } else {
+                            executor.delete_soft(&session, dry_run)?;
+                        }
+                    }
+                    if dry_run {
+                        println!("\nDry-run complete. No files were moved.");
+                    } else {
+                        println!("\nPrune complete.");
+                    }
+                } else {
+                    println!("\nRun with --confirm to perform the operation.");
+                }
             }
-        }
-        Some(Commands::Prune {
-            days,
-            hard,
-            dry_run,
-            confirm,
-        }) => {
-            registry.reload()?;
-            let to_prune = prune::find_sessions_to_prune(registry.list(), days);
+            Commands::Delete {
+                id,
+                confirm,
+                dry_run,
+                hard,
+            } => {
+                registry.reload()?;
+                if let Some(session) = registry.find(&id) {
+                    if !confirm {
+                        println!("Deleting session {}:", id);
+                        utils::term::print_sessions_table(&[session], &executor.config);
+                        println!("\nRun with --confirm to proceed.");
+                        return Ok(());
+                    }
 
-            if to_prune.is_empty() {
-                println!("No sessions older than {} days found.", days);
-                return Ok(());
-            }
-
-            println!("Found {} sessions to prune:", to_prune.len());
-            write_list_header(&mut handle)?;
-            for s in &to_prune {
-                write_session_row(&mut handle, s, home_dir.as_deref())?;
-            }
-
-            let is_actually_dry = dry_run && !confirm;
-
-            if is_actually_dry {
-                println!("\n{}", "[DRY-RUN] Pruning would occur if confirmed.".cyan());
-            } else {
-                println!("\nPruning {} sessions...", to_prune.len());
-                for s in to_prune {
                     if hard {
-                        executor.delete_hard(&s, false)?;
+                        executor.delete_hard(&session, dry_run)?;
                     } else {
-                        executor.delete_soft(&s, false)?;
+                        executor.delete_soft(&session, dry_run)?;
                     }
-                }
-                println!("{}", "Pruning complete.".green());
-            }
-        }
-        Some(Commands::Delete {
-            id,
-            hard,
-            dry_run,
-            confirm,
-        }) => {
-            registry.reload()?;
-            let session = registry.find(&id).ok_or_else(|| {
-                castor::error::CastorError::PathNotFound(std::path::PathBuf::from(id.clone()))
-            })?;
 
-            let is_actually_dry = dry_run && !confirm;
-
-            if hard {
-                executor.delete_hard(session, is_actually_dry)?;
-                if !is_actually_dry {
-                    println!("Session {} permanently deleted.", session.id.green());
-                }
-            } else {
-                executor.delete_soft(session, is_actually_dry)?;
-                if !is_actually_dry {
-                    println!("Session {} moved to trash.", session.id.yellow());
+                    if dry_run {
+                        println!("Dry-run: Session {} would be deleted.", id);
+                    } else {
+                        println!("Session {} deleted.", id);
+                    }
+                } else {
+                    println!("Session {} not found.", id);
                 }
             }
-        }
-        Some(Commands::Restore { id, dry_run }) => {
-            executor.restore(&id, dry_run)?;
-            if !dry_run {
-                println!("Session {} restored.", id.green());
+            Commands::Restore { id, dry_run } => {
+                let batch_id = executor.restore(&id, dry_run)?;
+                if dry_run {
+                    println!(
+                        "Dry-run: Session {} would be restored (Batch: {}).",
+                        id, batch_id
+                    );
+                } else {
+                    println!("Session {} restored successfully.", id);
+                }
+            }
+            Commands::ClearTrash { confirm } => {
+                if confirm {
+                    let count = executor.clear_trash()?;
+                    println!("Trash cleared. Removed {} sessions.", count);
+                } else {
+                    println!("Run with --confirm to permanently empty the trash.");
+                }
+            }
+            Commands::History { limit } => {
+                let history = executor.logger.load_history()?;
+                println!("{:<30} {:<15} {:<40}", "Time", "Action", "Session ID");
+                println!("{}", "-".repeat(85));
+                for entry in history.iter().rev().take(limit) {
+                    println!(
+                        "{:<30} {:<15} {:<40}",
+                        entry.timestamp.format("%Y-%m-%d %H:%M:%S"),
+                        format!("{:?}", entry.op_type),
+                        entry.session_id
+                    );
+                }
+            }
+            Commands::Doctor => {
+                registry.reload()?;
+                let report = DoctorReport::generate(registry.list(), &executor.config);
+                println!("Doctor Report:");
+                println!("  Total Sessions: {}", report.total_sessions);
+                println!("  Corrupted:      {}", report.corrupted_count);
+                println!("  Orphaned:       {}", report.orphaned_count);
+                println!("  High Risk:      {}", report.high_risk_count);
+                println!("\nSuggestions:");
+                for s in report.suggestions {
+                    println!("  - {}", s);
+                }
+            }
+            Commands::Tui => {
+                tui::run(registry, executor)?;
+            }
+            Commands::Completions { shell } => {
+                let mut cmd = Cli::command();
+                let name = cmd.get_name().to_string();
+                clap_complete::generate(shell, &mut cmd, name, &mut std::io::stdout());
             }
         }
-        Some(Commands::History { limit }) => {
-            let history = executor.logger.load_history()?;
-            for entry in history.iter().rev().take(limit) {
-                println!(
-                    "{:?} - {} - {:?} - {}",
-                    entry.timestamp, entry.session_id, entry.op_type, entry.batch_id
-                );
-            }
-        }
-        Some(Commands::Doctor) => {
-            registry.reload()?;
-            let report = DoctorReport::generate(registry.list(), &executor.config);
-
-            println!(
-                "{}",
-                "Castor Doctor - Environment Diagnostics".cyan().bold()
-            );
-
-            // 1. Basic Directory Checks
-            let home = std::env::var("HOME")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_default();
-            let gemini_base = home.join(".gemini");
-
-            let check_mark = |exists: bool| {
-                if exists { "✓".green() } else { "✗".red() }
-            };
-
-            println!(
-                "{} Gemini base directory: {:?}",
-                check_mark(report.gemini_base_exists),
-                gemini_base
-            );
-            println!(
-                "{} Sessions path: {:?}",
-                check_mark(report.sessions_path_exists),
-                executor.config.gemini_sessions_path
-            );
-            println!(
-                "{} Trash directory: {:?}",
-                check_mark(report.trash_path_exists),
-                executor.config.trash_path
-            );
-
-            // 2. Integrity
-            println!("\n{}", "Session Integrity:".yellow().bold());
-            println!("{:<25} {}", "Total Sessions:", report.total_sessions);
-
-            if report.orphaned_count > 0 {
-                println!(
-                    "{:<25} {}",
-                    "Orphaned Sessions:",
-                    report.orphaned_count.to_string().red().bold()
-                );
-                println!("   (Hosts no longer exist on disk)");
-            } else {
-                println!("{:<25} {}", "Orphaned Sessions:", "0".green());
-            }
-
-            if report.corrupted_count > 0 {
-                println!(
-                    "{:<25} {}",
-                    "Corrupted Sessions:",
-                    report.corrupted_count.to_string().red().bold()
-                );
-            }
-
-            if report.untrusted_count > 0 {
-                println!(
-                    "{:<25} {}",
-                    "Untrusted Sessions:",
-                    report.untrusted_count.to_string().magenta().bold()
-                );
-            }
-
-            if report.untracked_hosts_count > 0 {
-                println!(
-                    "{:<25} {}",
-                    "Untracked Hosts:",
-                    report.untracked_hosts_count.to_string().yellow()
-                );
-            }
-
-            if report.orphaned_count > 0 || report.corrupted_count > 0 || report.untrusted_count > 0
-            {
-                println!(
-                    "\n{} Hint: Use `castor list` to find unhealthy sessions or `prune` to clean up.",
-                    "ℹ".blue()
-                );
-            }
-        }
-        Some(Commands::Completions { shell }) => {
-            let mut cmd = Cli::command();
-            let name = cmd.get_name().to_string();
-            generate(shell, &mut cmd, name, &mut io::stdout());
-        }
-        None => {
-            println!("Use --help for available commands");
-        }
+    } else {
+        tui::run(registry, executor)?;
     }
 
     Ok(())

@@ -19,9 +19,6 @@ pub enum CastorError {
     #[error("Path not found: {0}")]
     PathNotFound(PathBuf),
 
-    #[error("Invalid session format: {0}")]
-    InvalidSession(String),
-
     #[error("Audit log error: {0}")]
     Audit(String),
 

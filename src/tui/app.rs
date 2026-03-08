@@ -3,6 +3,7 @@ use crate::error::Result;
 use crate::ops::Executor;
 use ratatui::widgets::{ListItem, ListState};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub enum InputMode {
     Normal,
@@ -19,14 +20,14 @@ pub enum GroupingMode {
 #[derive(Clone, PartialEq, Debug)]
 pub enum Selection {
     Group(String),
-    Session(String),
+    Session(String), // Store ID for O(1) registry lookup
 }
 
 pub struct App {
     pub registry: Registry,
     pub executor: Executor,
     pub groups: Vec<String>,
-    pub sessions_by_group: HashMap<String, Vec<Session>>,
+    pub sessions_by_group: HashMap<String, Vec<String>>, // Store IDs only
     pub flat_items: Vec<Selection>,
     pub list_state: ListState,
     pub input_mode: InputMode,
@@ -36,7 +37,7 @@ pub struct App {
 
     // Performance: Caches
     pub last_selected_id: Option<String>,
-    pub current_preview: Option<String>, // Store raw string to avoid lifetime issues
+    pub current_preview: Option<String>,
     pub items_cache: Option<Vec<ListItem<'static>>>,
 }
 
@@ -64,7 +65,7 @@ impl App {
             GroupingMode::Host => GroupingMode::Month,
             GroupingMode::Month => GroupingMode::Host,
         };
-        // Full regroup
+        // Full regroup using existing registry
         let sessions = self.registry.sessions.clone();
         self.registry.sessions.clear();
         self.registry.session_indices.clear();
@@ -72,7 +73,7 @@ impl App {
         self.add_sessions(sessions)
     }
 
-    pub fn add_sessions(&mut self, sessions: Vec<Session>) -> Result<()> {
+    pub fn add_sessions(&mut self, sessions: Vec<Arc<Session>>) -> Result<()> {
         let home = std::env::var("HOME").ok();
 
         for s in sessions {
@@ -87,8 +88,12 @@ impl App {
                 GroupingMode::Month => s.updated_at.format("%Y-%m").to_string(),
             };
 
-            self.registry.sessions.push(s.clone());
-            self.sessions_by_group.entry(group_key).or_default().push(s);
+            let id = s.id.clone();
+            self.registry.sessions.push(s);
+            self.sessions_by_group
+                .entry(group_key)
+                .or_default()
+                .push(id);
         }
 
         self.registry.rebuild_index();
@@ -107,16 +112,23 @@ impl App {
 
         for group in &self.groups {
             self.flat_items.push(Selection::Group(group.clone()));
-            if let Some(sessions) = self.sessions_by_group.get(group) {
-                let mut sorted = sessions.clone();
-                sorted.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-                for s in sorted {
-                    self.flat_items.push(Selection::Session(s.id.clone()));
+            if let Some(session_ids) = self.sessions_by_group.get(group) {
+                // To sort, we need to look up updated_at
+                let mut sorted_ids = session_ids.clone();
+                sorted_ids.sort_by(|a, b| {
+                    let s_a = self.registry.find_by_id(a);
+                    let s_b = self.registry.find_by_id(b);
+                    match (s_a, s_b) {
+                        (Some(a), Some(b)) => b.updated_at.cmp(&a.updated_at),
+                        _ => std::cmp::Ordering::Equal,
+                    }
+                });
+                for id in sorted_ids {
+                    self.flat_items.push(Selection::Session(id));
                 }
             }
         }
 
-        // Maintain selection if possible
         if self.list_state.selected().is_none() && !self.flat_items.is_empty() {
             self.list_state.select(Some(0));
             if matches!(self.flat_items[0], Selection::Group(_)) {
@@ -124,7 +136,6 @@ impl App {
             }
         }
 
-        // Invalidate items cache
         self.items_cache = None;
         self.update_selection_id();
     }
@@ -191,12 +202,12 @@ impl App {
         };
 
         if current_id != self.last_selected_id {
-            self.current_preview = None; // Show "Loading..."
+            self.current_preview = None;
             self.last_selected_id = current_id;
         }
     }
 
-    pub fn get_selected_session(&self) -> Option<&Session> {
+    pub fn get_selected_session(&self) -> Option<Arc<Session>> {
         if let Some(idx) = self.list_state.selected()
             && let Some(Selection::Session(id)) = self.flat_items.get(idx)
         {
@@ -235,7 +246,7 @@ mod tests {
         });
         let mut app = App::new(registry, executor);
 
-        let session = Session::from_path(&s_path, "proj1".into(), None).unwrap();
+        let session = Arc::new(Session::from_path(&s_path, "proj1".into(), None).unwrap());
         app.add_sessions(vec![session]).unwrap();
 
         assert_eq!(app.flat_items.len(), 2);

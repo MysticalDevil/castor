@@ -150,4 +150,21 @@ impl Executor {
 
         Ok(batch_id)
     }
+
+    /// Permanently clears the trash directory.
+    pub fn clear_trash(&self) -> Result<usize> {
+        let mut count = 0;
+        if self.config.trash_path.exists() {
+            for entry in std::fs::read_dir(&self.config.trash_path)?.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    std::fs::remove_dir_all(&path)?;
+                } else {
+                    std::fs::remove_file(&path)?;
+                }
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
 }

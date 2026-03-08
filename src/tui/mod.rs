@@ -14,31 +14,28 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
+use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
 
-pub use theme::{Theme, ThemeConfig};
-
 pub enum TuiEvent {
     Input(crossterm::event::KeyEvent),
-    PartialScan(Vec<crate::core::Session>),
+    PartialScan(Vec<Arc<crate::core::Session>>),
     ScanComplete,
     PreviewLoaded { id: String, content: String },
     Tick,
 }
 
 pub fn run(registry: Registry, executor: Executor) -> Result<()> {
-    // setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Setup communication channels
     let (tx, rx) = mpsc::channel();
 
-    // 1. Initial background scan
+    // 1. IMPROVED: Streaming background scan
     let tx_scan = tx.clone();
     let base_path = registry.scanner.base_path.clone();
     let cache_path = registry.cache_path.clone();
@@ -81,7 +78,7 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
                                     s.name = entry.name;
                                     s.validation_notes = entry.notes;
                                 }
-                                batch.push(s);
+                                batch.push(Arc::new(s));
                                 if batch.len() >= 20 {
                                     let _ = tx_scan
                                         .send(TuiEvent::PartialScan(std::mem::take(&mut batch)));
@@ -117,25 +114,33 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
 
     let mut last_input_time = std::time::Instant::now();
     let mut preview_triggered = true;
+    let mut should_render = true;
 
     loop {
-        terminal.draw(|f| ui::render(&mut app, f))?;
+        if should_render {
+            terminal.draw(|f| ui::render(&mut app, f))?;
+            should_render = false;
+        }
 
         match rx.recv_timeout(std::time::Duration::from_millis(20)) {
             Ok(TuiEvent::PartialScan(new_batch)) => {
                 app.add_sessions(new_batch)?;
+                should_render = true;
             }
             Ok(TuiEvent::ScanComplete) => {
                 app.message = None;
+                should_render = true;
             }
             Ok(TuiEvent::PreviewLoaded { id, content }) => {
                 if app.last_selected_id.as_ref() == Some(&id) {
                     app.current_preview = Some(content);
+                    should_render = true;
                 }
             }
             Ok(TuiEvent::Input(key)) => {
                 let old_id = app.last_selected_id.clone();
                 event::handle_key_event(&mut app, key)?;
+                should_render = true;
 
                 if app.last_selected_id != old_id {
                     last_input_time = std::time::Instant::now();
@@ -147,7 +152,7 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
                     && last_input_time.elapsed() > std::time::Duration::from_millis(100)
                     && let Some(s) = app.get_selected_session()
                 {
-                    trigger_async_preview(s.clone(), tx.clone());
+                    trigger_async_preview(s, tx.clone());
                     preview_triggered = true;
                 }
             }
@@ -159,7 +164,6 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
         }
     }
 
-    // restore terminal
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen,)?;
     terminal.show_cursor()?;
@@ -167,14 +171,13 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
     Ok(())
 }
 
-fn trigger_async_preview(session: crate::core::Session, tx: mpsc::Sender<TuiEvent>) {
+fn trigger_async_preview(session: Arc<crate::core::Session>, tx: mpsc::Sender<TuiEvent>) {
     thread::spawn(move || {
-        let s_clone = session.clone();
-        let markdown = crate::ops::export::session_to_markdown_limited(&s_clone, 20)
+        let markdown = crate::ops::export::session_to_markdown_limited(&session, 20)
             .unwrap_or_else(|_| "Error loading preview".to_string());
 
         let _ = tx.send(TuiEvent::PreviewLoaded {
-            id: session.id,
+            id: session.id.clone(),
             content: markdown,
         });
     });
