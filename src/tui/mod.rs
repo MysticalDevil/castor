@@ -16,11 +16,13 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
 use std::sync::mpsc;
 use std::thread;
+
 pub use theme::{Theme, ThemeConfig};
 
 pub enum TuiEvent {
     Input(crossterm::event::KeyEvent),
-    ScanComplete(Registry),
+    PartialScan(Vec<crate::core::Session>), // New: Streamed sessions
+    ScanComplete,
     PreviewLoaded { id: String, content: String },
     Tick,
 }
@@ -36,13 +38,66 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
     // Setup communication channels
     let (tx, rx) = mpsc::channel();
 
-    // 1. Initial background scan
+    // 1. IMPROVED: Streaming background scan
     let tx_scan = tx.clone();
-    let mut scan_registry = Registry::new(&registry.scanner.base_path, &registry.cache_path);
+    let base_path = registry.scanner.base_path.clone();
+    let cache_path = registry.cache_path.clone();
+
     thread::spawn(move || {
-        if scan_registry.reload().is_ok() {
-            let _ = tx_scan.send(TuiEvent::ScanComplete(scan_registry));
+        let inner_registry = Registry::new(&base_path, &cache_path);
+        // We'll perform a custom scan loop here to support streaming
+        if let Ok(all_dirs) = std::fs::read_dir(&base_path) {
+            for entry in all_dirs.flatten() {
+                let project_path = entry.path();
+                if project_path.is_dir() {
+                    let project_id = project_path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+
+                    let project_root_file = project_path.join(".project_root");
+                    let host_path = std::fs::read_to_string(project_root_file)
+                        .ok()
+                        .map(|s| std::path::PathBuf::from(s.trim()));
+
+                    let chats_path = project_path.join("chats");
+                    if chats_path.exists()
+                        && chats_path.is_dir()
+                        && let Ok(chats) = std::fs::read_dir(chats_path)
+                    {
+                        let mut batch = Vec::new();
+                        for chat_entry in chats.flatten() {
+                            let path = chat_entry.path();
+                            if path.extension().is_some_and(|ext| ext == "json")
+                                && let Ok(mut s) = crate::core::Session::from_path(
+                                    &path,
+                                    project_id.clone(),
+                                    host_path.clone(),
+                                )
+                            {
+                                // Attempt fast cache hit first
+                                if let Some(entry) = inner_registry.cache.get(&s.path, s.updated_at)
+                                {
+                                    s.health = entry.health;
+                                    s.name = entry.name;
+                                    s.validation_notes = entry.notes;
+                                }
+                                batch.push(s);
+                                if batch.len() >= 20 {
+                                    let _ = tx_scan
+                                        .send(TuiEvent::PartialScan(std::mem::take(&mut batch)));
+                                }
+                            }
+                        }
+                        if !batch.is_empty() {
+                            let _ = tx_scan.send(TuiEvent::PartialScan(batch));
+                        }
+                    }
+                }
+            }
         }
+        let _ = tx_scan.send(TuiEvent::ScanComplete);
     });
 
     // 2. Input polling thread
@@ -60,7 +115,7 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
 
     // create app
     let mut app = App::new(registry, executor);
-    app.message = Some("Scanning sessions...".to_string());
+    app.message = Some("Streaming sessions...".to_string());
 
     let mut last_input_time = std::time::Instant::now();
     let mut preview_triggered = true;
@@ -69,11 +124,11 @@ pub fn run(registry: Registry, executor: Executor) -> Result<()> {
         terminal.draw(|f| ui::render(&mut app, f))?;
 
         match rx.recv_timeout(std::time::Duration::from_millis(20)) {
-            Ok(TuiEvent::ScanComplete(new_registry)) => {
-                app.registry = new_registry;
-                app.reload()?;
+            Ok(TuiEvent::PartialScan(new_batch)) => {
+                app.add_sessions(new_batch)?;
+            }
+            Ok(TuiEvent::ScanComplete) => {
                 app.message = None;
-                preview_triggered = false;
             }
             Ok(TuiEvent::PreviewLoaded { id, content }) => {
                 if app.last_selected_id.as_ref() == Some(&id) {
