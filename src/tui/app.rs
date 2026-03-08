@@ -219,6 +219,7 @@ mod tests {
             cache_path: tmp.path().join("cache"),
             dry_run_by_default: true,
             icon_set: crate::utils::icons::IconSet::Ascii,
+            theme: crate::tui::theme::ThemeConfig::default(),
         });
         let mut app = App::new(registry, executor);
         app.reload().unwrap();

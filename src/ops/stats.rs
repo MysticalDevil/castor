@@ -61,6 +61,7 @@ mod tests {
             cache_path: PathBuf::from("/tmp/cache"),
             dry_run_by_default: true,
             icon_set: crate::utils::icons::IconSet::Ascii,
+            theme: crate::tui::theme::ThemeConfig::default(),
         };
 
         let stats = StorageStats::calculate(&[s], &config);

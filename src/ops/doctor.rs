@@ -76,6 +76,7 @@ mod tests {
             cache_path: PathBuf::from("/tmp"),
             dry_run_by_default: true,
             icon_set: crate::utils::icons::IconSet::Ascii,
+            theme: crate::tui::theme::ThemeConfig::default(),
         };
 
         let report = DoctorReport::generate(&[s1], &config);
