@@ -4,7 +4,7 @@
 
 Current stable release: `v0.1.0`.
 
-## 🌟 Features
+## Features
 
 - **Project-Aware Scanning**: Automatically groups sessions by the project they originated from.
 - **Modern TUI**: A rich Terminal User Interface powered by `ratatui` with three-pane navigation (Tree, File Status, Preview).
@@ -14,20 +14,61 @@ Current stable release: `v0.1.0`.
 - **High Performance**: Features asynchronous scanning and persistent metadata caching for instant loading of 1000+ sessions.
 - **Customizable**: Supports multiple icon sets (NerdFont, Unicode, Emoji, ASCII) and popular TUI themes (TokyoNight, Gruvbox, OneDark, Catppuccin).
 
-## 🚀 Installation
+## Installation
 
 ### Prerequisites
 - **Rust Toolchain**: 1.85+ (supports Rust 2024 edition).
 - **Just**: (Optional) For running project tasks.
 
+### Install via Cargo
+
+```bash
+cargo install --git https://github.com/MysticalDevil/castor.git --tag v0.1.0 castor
+castor --help
+```
+
+If your environment is configured for SSH git access, you can also use:
+
+```bash
+cargo install --git git@github.com:MysticalDevil/castor.git --tag v0.1.0 castor
+```
+
+### Install via mise
+
+`mise` cargo backend uses `cargo:<crate-name>` syntax:
+
+```bash
+mise install cargo:castor
+castor --help
+```
+
+If you prefer installing directly from this Git repository, use mise for Rust toolchain management and cargo for the package:
+
+```bash
+cargo install --git https://github.com/MysticalDevil/castor.git --tag v0.1.0 castor
+castor --help
+```
+
 ### Build from source
 ```bash
-git clone https://github.com/yourusername/castor.git
+git clone git@github.com:MysticalDevil/castor.git
 cd castor
 cargo build --release
 ```
 
-## 🛠 Usage
+## Usage
+
+Quick start:
+```bash
+# 1) Build
+cargo build --release
+
+# 2) List sessions
+./target/release/castor list
+
+# 3) Open TUI
+./target/release/castor tui
+```
 
 ### CLI Commands
 - `castor list`: List all detected sessions.
@@ -35,6 +76,8 @@ cargo build --release
 - `castor prune --days 30`: Preview and cleanup sessions older than 30 days.
 - `castor doctor`: Run a health check on your Gemini environment.
 - `castor stats`: Show disk usage and session counts.
+
+For complete command examples, see [docs/USAGE.md](docs/USAGE.md).
 
 ### TUI mode
 ```bash
@@ -46,7 +89,9 @@ castor tui
 - **Actions**: Press `d` to delete (moves to trash), `r` to reload.
 - **Preview**: Press `p` to trigger deep preview for the selected session.
 
-## 📂 Project Structure
+For tuning large-file preview behavior, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md#preview).
+
+## Project Structure
 
 - `src/core/`: Domain logic (Session parsing, Scanner, Metadata Cache).
 - `src/ops/`: Atomic business operations (Delete, Export, Grep, Doctor).
@@ -54,7 +99,14 @@ castor tui
 - `src/audit/`: Structured audit logging.
 - `src/utils/`: Shared utilities (Path formatting, Icons, Terminal rendering).
 
-## 🧪 Development
+## Documentation
+
+- [Usage Guide](docs/USAGE.md)
+- [Configuration Guide](docs/CONFIGURATION.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+
+## Development
 
 Use `just` to run common tasks:
 - `just test`: Run all unit and integration tests.
@@ -62,16 +114,16 @@ Use `just` to run common tasks:
 - `just test-tui`: Generate a rich test dataset and launch the TUI.
 - `just perf-bench`: Run repeatable performance benchmarks (`1k/5k/10k` reload tests).
 
-## 🔁 CI
+## CI
 
 The repository includes a GitHub Actions workflow at `.github/workflows/ci.yml` that runs:
 - `cargo test -- --nocapture`
 - `cargo tarpaulin --ignore-tests --fail-under 40 --out Stdout --timeout 300`
 
-## 🏷 Releases
+## Releases
 
 - The first stable tag is `v0.1.0`.
 
-## 📄 License
+## License
 
 This project is licensed under the **BSD 3-Clause License**. See the [LICENSE](LICENSE) file for details.
